@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* MedLingua — "clinical ink" design system. All colors MUST be HSL. */
+
+@layer base {
+  :root {
+    --background: 205 35% 5%;
+    --foreground: 195 25% 93%;
+
+    --surface: 205 32% 8%;
+    --elevated: 204 28% 11%;
+
+    --card: 205 32% 8%;
+    --card-foreground: 195 25% 93%;
+
+    --popover: 204 30% 9%;
+    --popover-foreground: 195 25% 93%;
+
+    --primary: 164 66% 50%;
+    --primary-foreground: 168 70% 5%;
+
+    --secondary: 204 26% 14%;
+    --secondary-foreground: 195 25% 93%;
+
+    --muted: 204 24% 13%;
+    --muted-foreground: 200 15% 60%;
+
+    --accent: 204 26% 15%;
+    --accent-foreground: 164 66% 62%;
+
+    --destructive: 6 88% 62%;
+    --destructive-foreground: 0 0% 100%;
+
+    --ok: 164 66% 50%;
+    --warn: 40 90% 61%;
+    --bad: 6 88% 64%;
+    --info: 205 95% 68%;
+
+    --border: 203 26% 16%;
+    --input: 203 26% 18%;
+    --ring: 164 66% 50%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 205 34% 6%;
+    --sidebar-foreground: 200 15% 70%;
+    --sidebar-primary: 164 66% 50%;
+    --sidebar-primary-foreground: 168 70% 5%;
+    --sidebar-accent: 204 26% 13%;
+    --sidebar-accent-foreground: 195 25% 93%;
+    --sidebar-border: 203 26% 14%;
+    --sidebar-ring: 164 66% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    background-image:
+      radial-gradient(1100px 620px at 8% -12%, hsl(164 66% 50% / 0.11), transparent 62%),
+      radial-gradient(900px 520px at 102% -4%, hsl(205 95% 55% / 0.08), transparent 58%),
+      linear-gradient(hsl(var(--border) / 0.4) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.4) 1px, transparent 1px);
+    background-size:
+      auto,
+      auto,
+      68px 68px,
+      68px 68px;
+    background-attachment: fixed, fixed, fixed, fixed;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.28);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.5);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-2xl border border-border/80 bg-surface/70 shadow-panel backdrop-blur-xl;
+  }
+
+  .panel-flat {
+    @apply rounded-xl border border-border/70 bg-elevated/60;
+  }
+
+  .hairline {
+    background-image: linear-gradient(90deg, transparent, hsl(var(--border)), transparent);
+  }
+
+  .label-xs {
+    @apply font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground;
+  }
+
+  .term-chip {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary;
+  }
+
+  .grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}
