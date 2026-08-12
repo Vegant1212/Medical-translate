@@ -4,11 +4,11 @@ node_modules
 # build
 dist
 dist-ssr
+*.tsbuildinfo
 
 # env
 .env
 *.local
-.env.local.save
 
 # Native
 ios/
@@ -36,3 +36,8 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+.vercel
+
+# Local validation artifacts
+tmp/
+work/

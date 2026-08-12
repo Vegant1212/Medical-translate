@@ -6,16 +6,18 @@ import {
   Check,
   Download,
   FileText,
-  FolderOpen,
-  History,
+  FileType2,
   Languages,
   Layers,
   Presentation,
   RotateCcw,
+  ShieldCheck,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
@@ -28,31 +30,27 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSettings } from "@/context/settings";
 import {
   ACCEPTED_EXTENSIONS,
-  batchSegments,
   buildTranslatedDocument,
   parseDocument,
   type DocKind,
   type ParsedDocument,
 } from "@/lib/documents";
 import { NON_LATIN_LANGUAGES, languageLabel } from "@/lib/languages";
-import { reviewTranslatedSegments, translateSegments } from "@/lib/medical";
+import { detectLanguageLocally } from "@/lib/language-detection";
+import { textToDocx } from "@/lib/docx-export";
+import { translateFastSegments } from "@/lib/fast-translation";
+import { createLocalProject, loadLocalProject, newProjectId, saveLocalProjectLanguages, saveLocalProjectState } from "@/lib/project-history";
+import { isDocumentTranslationComplete, preservesDocumentTokens, verifyClinicalTranslations, type ClinicalVerificationIssue } from "@/lib/medical";
 import { cn } from "@/lib/utils";
-import {
-  deleteDocumentProject,
-  listDocumentProjects,
-  loadDocumentProject,
-  saveDocumentProject,
-  type SavedDocumentProject,
-} from "@/lib/project-history";
 
 const KIND_META: Record<DocKind, { label: string; icon: typeof FileText; note: string }> = {
   pdf: {
     label: "PDF",
     icon: FileText,
-    note: "La traducción se escribe encima del original: se conservan imágenes, tablas, sellos y maquetación.",
+    note: "Conserva páginas, columnas e imágenes; ajusta la tipografía cuando la traducción necesita más espacio.",
   },
   docx: {
-    label: "Word",
+    label: "Word (.docx)",
     icon: Layers,
     note: "Se reescriben solo los nodos de texto del OOXML: estilos, numeración, tablas e imágenes intactos.",
   },
@@ -65,9 +63,79 @@ const KIND_META: Record<DocKind, { label: string; icon: typeof FileText; note: s
 
 type Filter = "todos" | "pendientes" | "editados";
 
+function shouldPreserveText(text: string): boolean {
+  const value = text.trim();
+  if (/^[A-ZÀ-ÖØ-Þ' -]+ ET AL\.?$/u.test(value)) return true;
+  if (/^\s*\d{1,3}\.\s+\p{Lu}/u.test(value)) return true;
+  if (/\b(?:University|Hospital|Medical Center|Medical College|Clinics|Pharmaceuticals Corporation)\b/.test(value) && !/[.!?]\s+\p{Lu}/u.test(value)) return true;
+  const allCaps = value === value.toLocaleUpperCase() && /^[\p{Lu}\d.,'&\-\s]+$/u.test(value);
+  const isContentHeading = /\b(?:BASILIXIMAB|REJECTION|METHODS|MATERIALS|RESULTS|INTRODUCTION|DISCUSSION|CONCLUSIONS?|BACKGROUND|PATIENTS?|TREATMENT|THERAPY|SAFETY|SURVIVAL|REFERENCES)\b/.test(value);
+  return allCaps && !isContentHeading;
+}
+
+const SPANISH_SCIENTIFIC_HEADINGS: Record<string, string> = {
+  "INTRODUCTION": "INTRODUCCIÓN",
+  "BACKGROUND": "ANTECEDENTES",
+  "MATERIALS AND METHODS": "MATERIALES Y MÉTODOS",
+  "METHODS": "MÉTODOS",
+  "RESULTS": "RESULTADOS",
+  "DISCUSSION": "DISCUSIÓN",
+  "CONCLUSION": "CONCLUSIÓN",
+  "CONCLUSIONS": "CONCLUSIONES",
+  "REFERENCES": "REFERENCIAS",
+  "PATIENTS": "PACIENTES",
+  "TREATMENT REGIMEN": "RÉGIMEN DE TRATAMIENTO",
+  "STATISTICAL ANALYSIS": "ANÁLISIS ESTADÍSTICO",
+  "PATIENT POPULATION": "POBLACIÓN DE PACIENTES",
+  "IMMUNOSUPPRESSIVE THERAPY": "TERAPIA INMUNOSUPRESORA",
+  "REJECTION": "RECHAZO",
+  "PATIENT AND GRAFT SURVIVAL": "SUPERVIVENCIA DEL PACIENTE Y DEL INJERTO",
+  "SAFETY PROFILE": "PERFIL DE SEGURIDAD",
+};
+
+function fixedHeadingTranslation(text: string, targetLanguage: string): string | undefined {
+  if (targetLanguage !== "es") return undefined;
+  return SPANISH_SCIENTIFIC_HEADINGS[text.trim().toLocaleUpperCase()];
+}
+
+function preservedDocumentIds(document: ParsedDocument | undefined): Set<string> {
+  const preserved = new Set<string>();
+  if (!document) return preserved;
+  for (const segment of document.segments) {
+    if (segment.translatable === false || shouldPreserveText(segment.text)) preserved.add(segment.id);
+  }
+  if (document.kind !== "pdf" || !document.blocks) return preserved;
+
+  const blocks = new Map(document.blocks.map((block) => [block.id, block]));
+  for (const heading of document.segments.filter((segment) => /^\s*(?:REFERENCES|BIBLIOGRAPHY|REFERENCIAS|BIBLIOGRAFÍA)\s*$/i.test(segment.text))) {
+    const headingBlock = blocks.get(heading.id);
+    if (!headingBlock?.lines.length) continue;
+    const referencePage = headingBlock.lines[0].page;
+    const referenceX = Math.min(...headingBlock.lines.map((line) => line.x));
+    const referenceY = Math.max(...headingBlock.lines.map((line) => line.y));
+    for (const block of document.blocks) {
+      if (!block.lines.length) continue;
+      if (block.id === heading.id) continue;
+      const page = block.lines[0].page;
+      const x = Math.min(...block.lines.map((line) => line.x));
+      const y = Math.max(...block.lines.map((line) => line.y));
+      if (page > referencePage || (page === referencePage && x >= referenceX - 24 && y <= referenceY + 12)) {
+        preserved.add(block.id);
+      }
+    }
+  }
+  return preserved;
+}
+
 export default function DocumentsPage() {
   const settings = useSettings();
+  const [searchParams] = useSearchParams();
+  const requestedProjectId = searchParams.get("project");
+  const restoredProjectRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const translationControllerRef = useRef<AbortController | null>(null);
+  const autoClinicalReviewRef = useRef<string | null>(null);
+  const [projectId, setProjectId] = useState<string | undefined>(undefined);
   const [document, setDocument] = useState<ParsedDocument | undefined>(undefined);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [edited, setEdited] = useState<Record<string, boolean>>({});
@@ -77,62 +145,41 @@ export default function DocumentsPage() {
   const [dragging, setDragging] = useState<boolean>(false);
   const [exportWarnings, setExportWarnings] = useState<string[]>([]);
   const [translateStart, setTranslateStart] = useState<number>(0);
-  const [currentProjectId, setCurrentProjectId] = useState<string | undefined>(undefined);
-  const [projects, setProjects] = useState<SavedDocumentProject[]>([]);
-
-  const refreshProjects = useCallback(async (): Promise<void> => {
-    try {
-      setProjects(await listDocumentProjects());
-    } catch (error) {
-      console.error("project history load failed", error);
-      toast.error("No se pudo cargar el historial de proyectos.");
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshProjects();
-  }, [refreshProjects]);
-
-  const persistProject = useCallback(
-    async (
-      parsed: ParsedDocument,
-      nextTranslations: Record<string, string>,
-      nextEdited: Record<string, boolean>,
-      id = currentProjectId ?? crypto.randomUUID(),
-    ): Promise<string> => {
-      const previous = projects.find((project) => project.id === id);
-      const now = Date.now();
-      await saveDocumentProject({
-        id,
-        name: parsed.fileName.replace(/\.(pdf|docx|pptx)$/i, ""),
-        createdAt: previous?.createdAt ?? now,
-        updatedAt: now,
-        document: parsed,
-        translations: nextTranslations,
-        edited: nextEdited,
-        sourceLanguage: settings.sourceLanguage,
-        targetLanguage: settings.targetLanguage,
-      });
-      setCurrentProjectId(id);
-      await refreshProjects();
-      return id;
-    },
-    [currentProjectId, projects, refreshProjects, settings.sourceLanguage, settings.targetLanguage],
-  );
+  const [clinicalIssues, setClinicalIssues] = useState<ClinicalVerificationIssue[] | undefined>();
+  const blockingClinicalIssues = clinicalIssues?.filter((issue) => issue.severity === "alta") ?? [];
+  const pdfClinicallyApproved = document?.kind !== "pdf" || (clinicalIssues !== undefined && blockingClinicalIssues.length === 0);
+  const preservedIds = useMemo(() => preservedDocumentIds(document), [document]);
+  const segmentIsComplete = useCallback((segment: { id: string; text: string }, values: Record<string, string> = translations) =>
+    (preservedIds.has(segment.id) && values[segment.id] === segment.text) || isDocumentTranslationComplete(
+      segment.text,
+      values[segment.id],
+      settings.sourceLanguage,
+      settings.targetLanguage,
+    ), [preservedIds, settings.sourceLanguage, settings.targetLanguage, translations]);
 
   const parse = useMutation({
     mutationFn: (file: File) => parseDocument(file),
     onSuccess: (parsed) => {
+      const id = newProjectId();
+      const detectedSource = detectLanguageLocally(parsed.segments.slice(0, 30).map((segment) => segment.text).join(" "));
+      const sourceLanguage = detectedSource ?? settings.sourceLanguage;
+      if (detectedSource && detectedSource !== settings.sourceLanguage) settings.patch({ sourceLanguage: detectedSource });
+      setProjectId(id);
       setDocument(parsed);
       setTranslations({});
       setEdited({});
       setProgress({ done: 0, total: 0 });
       setExportWarnings([]);
-      const id = crypto.randomUUID();
-      setCurrentProjectId(id);
-      void persistProject(parsed, {}, {}, id).catch((error) => {
+      setClinicalIssues(undefined);
+      autoClinicalReviewRef.current = null;
+      void createLocalProject({
+        id,
+        document: parsed,
+        sourceLanguage,
+        targetLanguage: settings.targetLanguage,
+      }).then(() => toast.success("Proyecto guardado en el historial local")).catch((error: unknown) => {
         console.error("initial project save failed", error);
-        toast.error("El documento abrió, pero no pudo guardarse en el historial.");
+        toast.error("El documento se abrió, pero el navegador no pudo guardarlo en el historial.");
       });
       toast.success(`${parsed.segments.length} segmentos listos para traducir`);
     },
@@ -143,68 +190,112 @@ export default function DocumentsPage() {
   });
 
   const translate = useMutation({
-    mutationFn: async (): Promise<number> => {
+    mutationFn: async (signal: AbortSignal): Promise<{ completed: number; remaining: number }> => {
       if (!document) throw new Error("Sube un documento primero.");
-      const protectedSegments = document.segments.filter((segment) => segment.protectedReason === "bibliography");
-      const translatableSegments = document.segments.filter((segment) => !segment.protectedReason);
-      const batches = batchSegments(translatableSegments);
-      const protectedMap = Object.fromEntries(protectedSegments.map((segment) => [segment.id, segment.text]));
-      const translatedMap: Record<string, string> = {};
-      setTranslations((previous) => ({ ...previous, ...protectedMap }));
-      setProgress({ done: protectedSegments.length, total: document.segments.length });
-      let done = protectedSegments.length;
-      for (const batch of batches) {
-        const map = await translateSegments({
-          segments: batch.map((segment) => ({ id: segment.id, text: segment.text })),
+      const working = { ...translations };
+      for (const segment of document.segments) {
+        const fixedHeading = fixedHeadingTranslation(segment.text, settings.targetLanguage);
+        if (fixedHeading) working[segment.id] = fixedHeading;
+        else if (preservedIds.has(segment.id)) working[segment.id] = segment.text;
+      }
+      setTranslations((previous) => ({ ...previous, ...working }));
+      const isComplete = (segment: { id: string; text: string }) => segmentIsComplete(segment, working);
+      const initialDone = document.segments.filter(isComplete).length;
+      setProgress({ done: initialDone, total: document.segments.length });
+
+      // Retry only the residual segments. Short headings, citation-heavy lines,
+      // and author rows occasionally need a smaller follow-up pass.
+      for (let pass = 0; pass < 3; pass += 1) {
+        const pending = document.segments.filter((segment) => !isComplete(segment));
+        if (pending.length === 0) break;
+        const pendingBeforePass = pending.length;
+        const map = await translateFastSegments({
+          segments: pending.map((segment) => ({ id: segment.id, text: segment.text })),
           targetLanguage: settings.targetLanguage,
           targetVariant: settings.variants[settings.targetLanguage],
           sourceLanguage: settings.sourceLanguage,
-          register: settings.register,
-          domain: settings.domain,
-          glossary: settings.glossaryPairs,
+          signal,
+          onProgress: (partial) => {
+            for (const segment of pending) {
+              const value = partial[segment.id];
+              if (value && preservesDocumentTokens(segment.text, value)) working[segment.id] = value;
+            }
+            setTranslations((previous) => ({ ...previous, ...working }));
+            setProgress({ done: document.segments.filter(isComplete).length, total: document.segments.length });
+          },
         });
-        Object.assign(translatedMap, map);
-        setTranslations((previous) => ({ ...previous, ...map }));
-        done += batch.length;
-        setProgress({ done, total: document.segments.length });
+        for (const segment of pending) {
+          const value = map[segment.id];
+          if (value && preservesDocumentTokens(segment.text, value)) working[segment.id] = value;
+        }
+        setTranslations((previous) => ({ ...previous, ...working }));
+        setProgress({ done: document.segments.filter(isComplete).length, total: document.segments.length });
+        const pendingAfterPass = document.segments.filter((segment) => !isComplete(segment)).length;
+        // Do not keep the UI apparently frozen if a model repeats the same
+        // rejected output. Stop promptly and expose the exact residual rows.
+        if (pendingAfterPass >= pendingBeforePass) break;
       }
 
-      // A final model pass fixes spelling, punctuation and PDF-extraction artifacts
-      // such as words incorrectly joined together, without touching bibliography.
-      const reviewBatches = batchSegments(
-        translatableSegments.map((segment) => ({
-          id: segment.id,
-          text: translatedMap[segment.id] ?? segment.text,
-          source: segment.text,
-          translation: translatedMap[segment.id] ?? segment.text,
-        })),
-      );
-      for (const batch of reviewBatches) {
-        const reviewed = await reviewTranslatedSegments({
-          segments: batch.map(({ id, source, translation }) => ({ id, source, translation })),
-          targetLanguage: settings.targetLanguage,
-          targetVariant: settings.variants[settings.targetLanguage],
-          register: settings.register,
-          domain: settings.domain,
-        });
-        Object.assign(translatedMap, reviewed);
-        setTranslations((previous) => ({ ...previous, ...reviewed }));
-      }
-      await persistProject(document, { ...protectedMap, ...translatedMap }, edited);
-      return translatableSegments.length;
+      const completed = document.segments.filter(isComplete).length;
+      return { completed: completed - initialDone, remaining: document.segments.length - completed };
     },
     onMutate: () => setTranslateStart(Date.now()),
-    onSuccess: (count) =>
-      toast.success(`${count} segmentos traducidos y revisados; bibliografía conservada sin cambios`),
+    onSuccess: ({ completed, remaining }) => {
+      if (remaining === 0) {
+        toast.success("Documento traducido completamente");
+      } else if (completed > 0) {
+        setFilter("pendientes");
+        toast.warning(`${completed} segmentos completados; quedan ${remaining} para otro intento.`);
+      } else {
+        setFilter("pendientes");
+        toast.error(`${remaining} segmentos requieren revisión. Ya se muestran en el editor para corregirlos sin esperar.`);
+      }
+    },
     onError: (error: unknown) => {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("document translation failed", error);
       toast.error(error instanceof Error ? error.message : "La traducción del documento falló.");
     },
+    onSettled: (_data, _error, signal) => {
+      if (translationControllerRef.current?.signal === signal) translationControllerRef.current = null;
+    },
   });
+
+  const startTranslation = useCallback(() => {
+    translationControllerRef.current?.abort();
+    autoClinicalReviewRef.current = null;
+    setClinicalIssues(undefined);
+    const controller = new AbortController();
+    translationControllerRef.current = controller;
+    translate.mutate(controller.signal);
+  }, [translate]);
+
+  const cancelTranslation = useCallback(() => {
+    translationControllerRef.current?.abort();
+    translationControllerRef.current = null;
+    toast.info("Proceso detenido. El avance quedó guardado en el historial.");
+  }, []);
+
+  const openIssueSegment = useCallback((id: string) => {
+    setFilter("todos");
+    setSearch(id);
+    globalThis.setTimeout(() => {
+      globalThis.document.getElementById(`segment-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+  }, []);
+
+  const acknowledgeIssue = useCallback((issueIndex: number) => {
+    setClinicalIssues((previous) => previous?.filter((_issue, index) => index !== issueIndex));
+    toast.success("Observación marcada como revisada");
+  }, []);
 
   const download = useMutation({
     mutationFn: async () => {
       if (!document) throw new Error("Sube un documento primero.");
+      const incomplete = document.segments.filter((segment) => !segmentIsComplete(segment));
+      if (incomplete.length > 0) {
+        throw new Error(`Aún hay ${incomplete.length} segmentos sin traducir completamente. Pulsa “Completar pendientes” antes de generar el PDF.`);
+      }
       return buildTranslatedDocument(document, translations);
     },
     onSuccess: (result) => {
@@ -218,6 +309,71 @@ export default function DocumentsPage() {
     },
   });
 
+  const downloadWord = useMutation({
+    mutationFn: async () => {
+      if (!document) throw new Error("Sube un documento primero.");
+      const lines: string[] = [];
+      let currentPage: number | undefined;
+      for (const segment of document.segments) {
+        if (segment.page !== undefined && segment.page !== currentPage) {
+          if (lines.length > 0) lines.push("");
+          lines.push(`${document.kind === "pptx" ? "Diapositiva" : "Página original"} ${segment.page}`);
+          currentPage = segment.page;
+        }
+        lines.push(translations[segment.id] ?? "");
+      }
+      const baseName = document.fileName.replace(/\.[^.]+$/, "");
+      const blob = await textToDocx(lines.join("\n"), {
+        title: `${baseName} — traducción`,
+        lang: settings.targetLanguage,
+      });
+      return { blob, fileName: `${baseName}-traducido.docx` };
+    },
+    onSuccess: ({ blob, fileName }) => {
+      saveAs(blob, fileName);
+      toast.success(`Word descargado: ${fileName}`);
+    },
+    onError: (error: unknown) => toast.error(error instanceof Error ? error.message : "No se pudo generar el Word."),
+  });
+
+  const clinicalVerification = useMutation({
+    mutationFn: async () => {
+      if (!document) throw new Error("Sube un documento primero.");
+      const issues: ClinicalVerificationIssue[] = [];
+      const pairs = document.segments.filter((segment) => !preservedIds.has(segment.id)).map((segment) => ({
+        id: segment.id,
+        source: segment.text,
+        translation: translations[segment.id] ?? "",
+      }));
+      for (let start = 0; start < pairs.length; start += 40) {
+        const batch = pairs.slice(start, start + 40);
+        issues.push(...await verifyClinicalTranslations({
+          segments: batch,
+          targetLanguage: settings.targetLanguage,
+          targetVariant: settings.variants[settings.targetLanguage],
+          domain: settings.domain,
+        }));
+      }
+      for (const pair of pairs) {
+        if (!preservesDocumentTokens(pair.source, pair.translation) && !issues.some((issue) => issue.id === pair.id)) {
+          issues.push({ id: pair.id, severity: "alta", message: "Las cifras o referencias no coinciden exactamente con el original." });
+        }
+      }
+      return issues;
+    },
+    onSuccess: (issues) => {
+      setClinicalIssues(issues);
+      const blocking = issues.filter((issue) => issue.severity === "alta").length;
+      if (issues.length === 0) toast.success("Verificación clínica terminada sin observaciones");
+      else if (blocking > 0) toast.warning(`Verificación terminada: ${blocking} observaciones importantes y ${issues.length - blocking} recomendaciones`);
+      else toast.info(`Verificación terminada: ${issues.length} recomendaciones no bloqueantes`);
+    },
+    onError: (error: unknown) => {
+      console.error("automatic clinical review failed", error);
+      toast.warning("La revisión clínica automática no estuvo disponible. Puedes repetirla sin perder la traducción.");
+    },
+  });
+
   const handleFiles = useCallback(
     (files: FileList | null): void => {
       const file = files?.[0];
@@ -228,23 +384,120 @@ export default function DocumentsPage() {
   );
 
   const translatedCount = useMemo(
-    () => (document ? document.segments.filter((segment) => Boolean(translations[segment.id])).length : 0),
-    [document, translations],
+    () => (document ? document.segments.filter((segment) => segmentIsComplete(segment)).length : 0),
+    [document, segmentIsComplete],
   );
+  const remainingCount = document ? document.segments.length - translatedCount : 0;
+
+  useEffect(() => {
+    if (!document || document.segments.length === 0 || remainingCount > 0 || translate.isPending) return;
+    if (clinicalIssues !== undefined || clinicalVerification.isPending) return;
+    const reviewKey = projectId ?? document.fileName;
+    if (autoClinicalReviewRef.current === reviewKey) return;
+    autoClinicalReviewRef.current = reviewKey;
+    clinicalVerification.mutate();
+  }, [clinicalIssues, clinicalVerification, document, projectId, remainingCount, translate.isPending]);
+
+  const verifyDocumentIntegrity = (): ClinicalVerificationIssue[] => {
+    if (!document) return [{ id: "documento", severity: "alta", message: "No hay un documento abierto." }];
+    const issues: ClinicalVerificationIssue[] = [];
+    for (const segment of document.segments) {
+      const translation = translations[segment.id] ?? "";
+      if (!segmentIsComplete(segment)) {
+        issues.push({ id: segment.id, severity: "alta", message: "El segmento no tiene una traducción completa." });
+      } else if (!preservesDocumentTokens(segment.text, translation)) {
+        issues.push({ id: segment.id, severity: "alta", message: "Las cifras, dosis o referencias no coinciden exactamente con el original." });
+      }
+    }
+    setClinicalIssues(issues);
+    if (issues.length === 0) toast.success("Integridad verificada: cifras, dosis y referencias intactas");
+    else toast.warning(`Se encontraron ${issues.length} segmentos que necesitan revisión`);
+    return issues;
+  };
+
+  useEffect(() => {
+    if (!requestedProjectId || restoredProjectRef.current === requestedProjectId) return;
+    restoredProjectRef.current = requestedProjectId;
+    void loadLocalProject(requestedProjectId).then((project) => {
+      if (!project) {
+        toast.error("Ese proyecto ya no existe en el historial local.");
+        return;
+      }
+      setProjectId(project.id);
+      setDocument(project.document);
+      autoClinicalReviewRef.current = null;
+      setTranslations(project.translations);
+      setEdited(project.edited);
+      setProgress({
+        done: project.document.segments.filter((segment) => project.translations[segment.id]?.trim()).length,
+        total: project.document.segments.length,
+      });
+      const detectedSource = detectLanguageLocally(
+        project.document.segments.slice(0, 30).map((segment) => segment.text).join(" "),
+      );
+      const detectedTarget = detectLanguageLocally(
+        project.document.segments.slice(0, 30).map((segment) => project.translations[segment.id] ?? "").join(" "),
+      );
+      const sourceLanguage = detectedSource ?? project.sourceLanguage;
+      const targetLanguage = detectedTarget ?? project.targetLanguage;
+      settings.patch({ sourceLanguage, targetLanguage });
+      if (sourceLanguage !== project.sourceLanguage || targetLanguage !== project.targetLanguage) {
+        void saveLocalProjectLanguages(project.id, sourceLanguage, targetLanguage);
+      }
+      toast.success(`Proyecto «${project.document.fileName}» recuperado`);
+    }).catch((error: unknown) => {
+      console.error("project restore failed", error);
+      toast.error("No se pudo recuperar el proyecto local.");
+    });
+  }, [requestedProjectId, settings]);
+
+  useEffect(() => {
+    if (!document || projectId) return;
+    const id = newProjectId();
+    setProjectId(id);
+    void createLocalProject({
+      id,
+      document,
+      sourceLanguage: settings.sourceLanguage,
+      targetLanguage: settings.targetLanguage,
+      translations,
+      edited,
+    }).catch((error: unknown) => console.error("recovered session save failed", error));
+  }, [document, edited, projectId, settings.sourceLanguage, settings.targetLanguage, translations]);
+
+  useEffect(() => {
+    if (!projectId || !document) return;
+    const timeout = window.setTimeout(() => {
+      void saveLocalProjectState(projectId, translations, edited).catch((error: unknown) => {
+        console.error("project autosave failed", error);
+        toast.error("No se pudo guardar el progreso local.");
+      });
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [document, edited, projectId, translations]);
+
+  useEffect(() => {
+    if (!projectId || !document) return;
+    const timeout = window.setTimeout(() => {
+      void saveLocalProjectLanguages(projectId, settings.sourceLanguage, settings.targetLanguage)
+        .catch((error: unknown) => console.error("project language save failed", error));
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [document, projectId, settings.sourceLanguage, settings.targetLanguage]);
 
   const visibleSegments = useMemo(() => {
     if (!document) return [];
     const needle = search.trim().toLowerCase();
     return document.segments.filter((segment) => {
-      if (filter === "pendientes" && translations[segment.id]) return false;
+      if (filter === "pendientes" && segmentIsComplete(segment)) return false;
       if (filter === "editados" && !edited[segment.id]) return false;
       if (needle.length > 0) {
-        const haystack = `${segment.text} ${translations[segment.id] ?? ""}`.toLowerCase();
+        const haystack = `${segment.id} ${segment.text} ${translations[segment.id] ?? ""}`.toLowerCase();
         if (!haystack.includes(needle)) return false;
       }
       return true;
     });
-  }, [document, edited, filter, search, translations]);
+  }, [document, edited, filter, search, segmentIsComplete, translations]);
 
   const nonLatinWarning =
     document?.kind === "pdf" && NON_LATIN_LANGUAGES.includes(settings.targetLanguage)
@@ -255,6 +508,10 @@ export default function DocumentsPage() {
   const progressPercent =
     progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
   const totalChars = document?.segments.reduce((sum, s) => sum + s.text.length, 0) ?? 0;
+  const detectedLanguage = useMemo(
+    () => detectLanguageLocally(document?.segments.slice(0, 30).map((segment) => segment.text).join(" ") ?? ""),
+    [document],
+  );
 
   return (
     <AppShell
@@ -263,26 +520,55 @@ export default function DocumentsPage() {
       actions={
         document ? (
           <div className="flex items-center gap-2">
+            {!translate.isPending ? (
+              <>
+                {translatedCount > 0 ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      if (!window.confirm("¿Borrar las traducciones de este proyecto y comenzar nuevamente? El PDF original se conservará.")) return;
+                      setTranslations({});
+                      setEdited({});
+                      setProgress({ done: 0, total: document.segments.length });
+                      setClinicalIssues(undefined);
+                      autoClinicalReviewRef.current = null;
+                      toast.success("Traducción reiniciada; el documento original se conservó");
+                    }}
+                    className="h-9 gap-1.5 px-2.5 text-[12.5px] text-muted-foreground hover:text-primary"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Reiniciar traducción
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setDocument(undefined);
+                    setProjectId(undefined);
+                    setTranslations({});
+                    setEdited({});
+                    setClinicalIssues(undefined);
+                    autoClinicalReviewRef.current = null;
+                  }}
+                  className="h-9 gap-1.5 px-2.5 text-[12.5px] text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Quitar documento
+                </Button>
+              </>
+            ) : null}
             <Button
               type="button"
-              variant="ghost"
-              onClick={() => {
-                setDocument(undefined);
-                setTranslations({});
-                setEdited({});
-                setCurrentProjectId(undefined);
-              }}
-              className="h-9 gap-1.5 px-2.5 text-[12.5px] text-muted-foreground hover:text-destructive"
+              onClick={translate.isPending ? cancelTranslation : startTranslation}
+              disabled={!translate.isPending && (document.segments.length === 0 || remainingCount === 0)}
+              variant={translate.isPending ? "destructive" : "default"}
+              className="gap-2 rounded-xl shadow-glow active:scale-[0.97]"
             >
-              <Trash2 className="h-3.5 w-3.5" /> Quitar
-            </Button>
-            <Button
-              type="button"
-              onClick={() => translate.mutate()}
-              disabled={translate.isPending || document.segments.length === 0}
-              className="gap-2 rounded-xl bg-primary text-primary-foreground shadow-glow active:scale-[0.97]"
-            >
-              {translate.isPending ? <Spinner label="Traduciendo…" /> : <><Languages className="h-4 w-4" /> Traducir documento</>}
+              {translate.isPending ? (
+                <><X className="h-4 w-4" /> Cancelar proceso</>
+              ) : (
+                <><Languages className="h-4 w-4" /> {translatedCount > 0 ? `Completar ${remainingCount} pendientes` : "Traducir documento"}</>
+              )}
             </Button>
           </div>
         ) : null
@@ -293,7 +579,7 @@ export default function DocumentsPage() {
           <>
             <Panel className="p-4">
               <div className="space-y-4">
-                <LanguageBar />
+                <LanguageBar detectedLanguage={detectedLanguage} />
                 <div className="h-px hairline" />
                 <RegisterDomainControls />
               </div>
@@ -328,7 +614,7 @@ export default function DocumentsPage() {
                   {parse.isPending ? "Analizando el documento…" : "Arrastra tu documento o haz clic"}
                 </p>
                 <p className="mt-1.5 text-[12.5px] text-muted-foreground">
-                  PDF · DOCX · PPTX — hasta 25 MB. El diseño original se conserva.
+                  PDF · Word (.docx) · PowerPoint (.pptx) — hasta 25 MB.
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2">
@@ -392,6 +678,7 @@ export default function DocumentsPage() {
                       totalUnits={progress.total}
                       doneUnits={progress.done}
                       fileName={document.fileName}
+                      onCancel={cancelTranslation}
                     />
                   </Panel>
                 </motion.div>
@@ -418,19 +705,10 @@ export default function DocumentsPage() {
                           {translatedCount} traducidos
                         </p>
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => download.mutate()}
-                        disabled={download.isPending || translatedCount === 0}
-                        className="h-9 gap-1.5 rounded-xl border border-primary/30 bg-primary/10 px-3 text-[12.5px] text-primary hover:bg-primary/20"
-                      >
-                        {download.isPending ? <Spinner label="Generando…" /> : <><Download className="h-3.5 w-3.5" /> Descargar {meta?.label}</>}
-                      </Button>
                     </div>
 
                     <div className="mt-4 space-y-3">
-                      <LanguageBar />
+                      <LanguageBar detectedLanguage={detectedLanguage} />
                       <RegisterDomainControls />
                     </div>
 
@@ -457,6 +735,68 @@ export default function DocumentsPage() {
                       ),
                     )}
                   </Panel>
+
+                  <Panel
+                    title={remainingCount === 0 ? "Traducción completa" : "Finalización del documento"}
+                    meta={remainingCount === 0
+                      ? clinicalVerification.isPending
+                        ? "La revisión clínica automática está comprobando la traducción."
+                        : "La revisión clínica se ejecuta automáticamente; también puedes repetirla cuando quieras."
+                      : `Faltan ${remainingCount} segmentos. Completa la traducción para habilitar las descargas y la revisión clínica.`}
+                  >
+                      <div className="grid gap-3 p-4 md:grid-cols-3">
+                        <Button type="button" onClick={() => downloadWord.mutate()} disabled={downloadWord.isPending || remainingCount > 0} className="h-auto justify-start gap-3 rounded-xl px-4 py-3">
+                          {downloadWord.isPending ? <Spinner label="Creando Word…" /> : <><FileType2 className="h-5 w-5" /><span className="text-left"><strong className="block">Descargar Word</strong><small className="font-normal opacity-80">{remainingCount > 0 ? `Completa ${remainingCount} pendientes` : "Texto completo y editable"}</small></span></>}
+                        </Button>
+                        <Button type="button" variant="outline" onClick={() => clinicalVerification.mutate()} disabled={clinicalVerification.isPending || remainingCount > 0} className="h-auto justify-start gap-3 rounded-xl px-4 py-3">
+                          {clinicalVerification.isPending ? <Spinner label="Revisando automáticamente…" /> : <><ShieldCheck className="h-5 w-5" /><span className="text-left"><strong className="block">Revisión clínica automática</strong><small className="font-normal text-muted-foreground">{remainingCount > 0 ? `Completa ${remainingCount} pendientes` : clinicalVerification.isError ? "No disponible · pulsa para reintentar" : clinicalIssues === undefined ? "Se iniciará al completar" : "Terminada · pulsa para repetir"}</small></span></>}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={async () => {
+                            if (document.kind !== "pdf" || pdfClinicallyApproved) {
+                              download.mutate();
+                              return;
+                            }
+                            if (clinicalIssues === undefined) {
+                              const issues = verifyDocumentIntegrity();
+                              if (issues.length === 0) download.mutate();
+                            }
+                          }}
+                          disabled={download.isPending || remainingCount > 0 || (document.kind === "pdf" && (clinicalVerification.isPending || blockingClinicalIssues.length > 0))}
+                          className="h-auto justify-start gap-3 rounded-xl px-4 py-3"
+                        >
+                          {download.isPending ? <Spinner label="Reconstruyendo…" /> : <><Download className="h-5 w-5" /><span className="text-left"><strong className="block">{document.kind === "pdf" ? (clinicalIssues === undefined ? "Verificar integridad y crear PDF" : "Crear PDF traducido") : `Descargar ${meta?.label}`}</strong><small className="font-normal text-muted-foreground">{remainingCount > 0 ? `Completa ${remainingCount} pendientes` : document.kind === "pdf" ? clinicalVerification.isPending ? "Esperando la revisión clínica automática" : clinicalIssues === undefined ? "Comprobación local y reconstrucción" : blockingClinicalIssues.length > 0 ? `Resuelve ${blockingClinicalIssues.length} observaciones importantes` : "Listo · recomendaciones no bloqueantes" : "Conservar estructura original"}</small></span></>}
+                        </Button>
+                      </div>
+                      {clinicalIssues ? (
+                        <div className="border-t border-border/50 p-4 text-[12.5px]">
+                          {clinicalIssues.length === 0 ? (
+                            <p className="flex items-center gap-2 text-primary"><Check className="h-4 w-4" /> Sin observaciones clínicas detectadas.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="font-medium">{blockingClinicalIssues.length > 0 ? `${blockingClinicalIssues.length} observaciones importantes y ${clinicalIssues.length - blockingClinicalIssues.length} recomendaciones:` : `${clinicalIssues.length} recomendaciones no bloqueantes:`}</p>
+                              {clinicalIssues.map((issue, index) => (
+                                <div key={`${issue.id}-${index}`} className="flex flex-col gap-2 rounded-lg border border-border/60 bg-background/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+                                  <p className={issue.severity === "alta" ? "text-warn" : "text-muted-foreground"}>
+                                    {issue.id} · {issue.severity}: {issue.message}
+                                  </p>
+                                  <div className="flex shrink-0 gap-2">
+                                    <Button type="button" size="sm" variant="outline" onClick={() => openIssueSegment(issue.id)}>
+                                      Editar segmento
+                                    </Button>
+                                    <Button type="button" size="sm" variant="ghost" onClick={() => acknowledgeIssue(index)}>
+                                      Marcar revisada
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </Panel>
 
                   <Panel
                     title="Editor bilingüe"
@@ -491,10 +831,10 @@ export default function DocumentsPage() {
                         visibleSegments.map((segment) => {
                           const value = translations[segment.id] ?? "";
                           return (
-                            <div key={segment.id} className="grid gap-3 p-4 lg:grid-cols-2">
+                            <div id={`segment-${segment.id}`} key={segment.id} className="grid gap-3 p-4 lg:grid-cols-2">
                               <div>
                                 <p className="mb-1.5 flex items-center gap-2 label-xs">
-                                  {segment.container}
+                                  {segment.container} · {segment.id}
                                   {edited[segment.id] ? (
                                     <span className="inline-flex items-center gap-1 text-primary">
                                       <Check className="h-3 w-3" /> editado
@@ -529,13 +869,7 @@ export default function DocumentsPage() {
                                   onChange={(event) => {
                                     setTranslations((previous) => ({ ...previous, [segment.id]: event.target.value }));
                                     setEdited((previous) => ({ ...previous, [segment.id]: true }));
-                                  }}
-                                  onBlur={() => {
-                                    if (document && currentProjectId) {
-                                      void persistProject(document, translations, edited).catch(() =>
-                                        toast.error("No se pudo guardar el último cambio en el historial."),
-                                      );
-                                    }
+                                    setClinicalIssues((previous) => previous?.filter((issue) => issue.id !== segment.id));
                                   }}
                                   placeholder="Sin traducir"
                                   className={cn(
@@ -556,76 +890,6 @@ export default function DocumentsPage() {
           </motion.div>
         )}
       </div>
-
-      <Panel
-        title="Historial de proyectos"
-        meta={`${projects.length} guardado${projects.length === 1 ? "" : "s"} en este navegador`}
-        className="mx-auto mt-5 max-w-[1400px]"
-      >
-        {projects.length === 0 ? (
-          <div className="flex flex-col items-center justify-center px-4 py-10 text-center text-muted-foreground">
-            <History className="mb-3 h-8 w-8 opacity-50" />
-            <p className="text-sm">Los documentos que abras aparecerán aquí automáticamente.</p>
-          </div>
-        ) : (
-          <ul className="divide-y divide-border/60">
-            {projects.map((project) => {
-              const completed = project.document.segments.filter((segment) => project.translations[segment.id]).length;
-              return (
-                <li key={project.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{project.name}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {project.document.kind.toUpperCase()} · {completed}/{project.document.segments.length} segmentos · Actualizado {new Date(project.updatedAt).toLocaleString("es-MX")}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5"
-                      onClick={() => {
-                        void loadDocumentProject(project)
-                          .then((loaded) => {
-                            setDocument(loaded.document);
-                            setTranslations(loaded.translations);
-                            setEdited(loaded.edited);
-                            setCurrentProjectId(loaded.id);
-                            setProgress({ done: 0, total: 0 });
-                            setExportWarnings([]);
-                            window.scrollTo({ top: 0, behavior: "smooth" });
-                            toast.success(`Proyecto «${loaded.name}» recuperado`);
-                          })
-                          .catch(() => toast.error("No se pudo descargar el proyecto."));
-                      }}
-                    >
-                      <FolderOpen className="h-3.5 w-3.5" /> Retomar
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="gap-1.5 text-muted-foreground hover:text-destructive"
-                      onClick={() => {
-                        void deleteDocumentProject(project.id)
-                          .then(async () => {
-                            if (currentProjectId === project.id) setCurrentProjectId(undefined);
-                            await refreshProjects();
-                            toast.success("Proyecto borrado del historial");
-                          })
-                          .catch(() => toast.error("No se pudo borrar el proyecto."));
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Borrar
-                    </Button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Panel>
     </AppShell>
   );
 }

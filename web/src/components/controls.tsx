@@ -20,15 +20,17 @@ interface LanguagePickerProps {
   onChange: (code: string) => void;
   allowAuto?: boolean;
   align?: "start" | "end";
+  detectedLanguage?: string;
 }
 
 /** Language + regional variant picker limited to the languages enabled in settings. */
-export function LanguagePicker({ value, onChange, allowAuto = false, align = "start" }: LanguagePickerProps) {
+export function LanguagePicker({ value, onChange, allowAuto = false, align = "start", detectedLanguage }: LanguagePickerProps) {
   const { enabledLanguages, variants, setVariant } = useSettings();
   const languages = CATALOG.filter((language) => enabledLanguages.includes(language.code));
   const language = getLanguage(value);
   const variantCode = language ? variants[language.code] : undefined;
   const variant = language?.variants.find((item) => item.code === variantCode);
+  const detected = detectedLanguage ? getLanguage(detectedLanguage) : undefined;
 
   return (
     <DropdownMenu>
@@ -37,10 +39,10 @@ export function LanguagePicker({ value, onChange, allowAuto = false, align = "st
           type="button"
           className="group flex min-w-0 items-center gap-2.5 rounded-xl border border-border/80 bg-elevated/60 px-3 py-2 text-left transition hover:border-primary/40 hover:bg-elevated"
         >
-          <span className="text-base leading-none">{value === "auto" ? "🌐" : (language?.flag ?? "🌐")}</span>
+          <span className="text-base leading-none">{value === "auto" ? (detected?.flag ?? "🌐") : (language?.flag ?? "🌐")}</span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[13.5px] font-medium leading-tight">
-              {value === "auto" ? "Detectar idioma" : (language?.name ?? value)}
+              {value === "auto" ? (detected ? `Detectado: ${detected.name}` : "Detectar idioma") : (language?.name ?? value)}
             </span>
             <span className="block truncate font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
               {value === "auto" ? "automático" : (variant?.label ?? "neutro")}
@@ -92,7 +94,7 @@ export function LanguagePicker({ value, onChange, allowAuto = false, align = "st
 }
 
 /** Source → target language bar with swap button. */
-export function LanguageBar({ allowAuto = true }: { allowAuto?: boolean }) {
+export function LanguageBar({ allowAuto = true, detectedLanguage }: { allowAuto?: boolean; detectedLanguage?: string }) {
   const { sourceLanguage, targetLanguage, patch, swapLanguages } = useSettings();
   return (
     <div className="flex items-center gap-2">
@@ -100,6 +102,7 @@ export function LanguageBar({ allowAuto = true }: { allowAuto?: boolean }) {
         <LanguagePicker
           value={sourceLanguage}
           allowAuto={allowAuto}
+          detectedLanguage={detectedLanguage}
           onChange={(code) => patch({ sourceLanguage: code })}
         />
       </div>
@@ -130,7 +133,10 @@ interface SegmentedProps<T extends string> {
 
 export function Segmented<T extends string>({ options, value, onChange, className }: SegmentedProps<T>) {
   return (
-    <div className={cn("flex gap-1 rounded-xl border border-border/70 bg-elevated/50 p-1", className)}>
+    <div
+      className={cn("grid gap-1 rounded-xl border border-border/70 bg-elevated/50 p-1", className)}
+      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+    >
       {options.map((option) => {
         const active = option.id === value;
         return (
@@ -147,7 +153,7 @@ export function Segmented<T extends string>({ options, value, onChange, classNam
             {active ? (
               <span className="absolute inset-0 rounded-lg bg-primary shadow-glow" aria-hidden="true" />
             ) : null}
-            <span className="relative whitespace-nowrap">{option.label}</span>
+            <span className="relative leading-tight">{option.label}</span>
           </button>
         );
       })}

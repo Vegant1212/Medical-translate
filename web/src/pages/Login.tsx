@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/auth";
 
 export default function LoginPage() {
-  const { user, signIn, signUp } = useAuth();
+  const { configured, user, signIn, signUp } = useAuth();
   const location = useLocation();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -51,9 +51,15 @@ export default function LoginPage() {
           <Logo size={38} />
           <div>
             <h1 className="font-serif text-2xl font-semibold">MedLingua</h1>
-            <p className="text-sm text-muted-foreground">Tus proyectos médicos, siempre disponibles</p>
+            <p className="text-sm text-muted-foreground">Acceso privado a tus herramientas médicas</p>
           </div>
         </div>
+
+        {!configured ? (
+          <p className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            El acceso de usuarios todavía no está configurado en este entorno.
+          </p>
+        ) : null}
 
         <div className="mb-5 grid grid-cols-2 rounded-xl border border-border/70 bg-elevated/60 p-1">
           <button type="button" onClick={() => setMode("signin")} className={`rounded-lg px-3 py-2 text-sm ${mode === "signin" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
@@ -73,14 +79,14 @@ export default function LoginPage() {
             <span className="mb-1.5 block text-sm font-medium">Contraseña</span>
             <Input type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} required minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" />
           </label>
-          <Button type="submit" disabled={pending} className="h-11 w-full rounded-xl">
+          <Button type="submit" disabled={pending || !configured} className="h-11 w-full rounded-xl">
             {pending ? <><Loader2 className="animate-spin" /> Procesando…</> : <><LockKeyhole /> {mode === "signin" ? "Entrar" : "Crear cuenta privada"}</>}
           </Button>
         </form>
 
         <p className="mt-5 flex items-start gap-2 rounded-xl border border-info/20 bg-info/5 p-3 text-xs leading-relaxed text-muted-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-info" />
-          Tus proyectos y documentos se guardan de forma privada y solo estarán disponibles dentro de tu cuenta.
+          El acceso protege las herramientas. El historial de documentos se guarda localmente en este navegador y no se sube a Supabase.
         </p>
       </div>
     </div>

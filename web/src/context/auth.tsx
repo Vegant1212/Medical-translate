@@ -1,9 +1,10 @@
 import type { Session, User } from "@supabase/supabase-js";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { supabase } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 interface AuthContextValue {
+  configured: boolean;
   loading: boolean;
   session: Session | null;
   user: User | null;
@@ -14,14 +15,24 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function missingConfiguration(): Error {
+  return new Error("El acceso de usuarios todavía no está configurado en este entorno.");
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(isSupabaseConfigured);
 
   useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
     let mounted = true;
-    void supabase.auth.getSession().then(({ data }) => {
+    void supabase.auth.getSession().then(({ data, error }) => {
       if (!mounted) return;
+      if (error) console.error("auth session failed", error);
       setSession(data.session);
       setLoading(false);
     });
@@ -36,23 +47,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = useCallback(async (email: string, password: string): Promise<void> => {
+    if (!supabase) throw missingConfiguration();
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
   }, []);
 
   const signUp = useCallback(async (email: string, password: string): Promise<boolean> => {
+    if (!supabase) throw missingConfiguration();
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) throw error;
     return Boolean(data.session);
   }, []);
 
   const signOut = useCallback(async (): Promise<void> => {
+    if (!supabase) return;
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ loading, session, user: session?.user ?? null, signIn, signUp, signOut }),
+    () => ({ configured: isSupabaseConfigured, loading, session, user: session?.user ?? null, signIn, signUp, signOut }),
     [loading, session, signIn, signOut, signUp],
   );
 

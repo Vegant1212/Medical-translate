@@ -160,6 +160,10 @@ export async function buildTranslatedOffice(input: {
   if (replaced === 0) {
     warnings.push("No se aplicó ninguna traducción al documento.");
   }
+  const expected = Object.values(input.translations).filter((translation) => translation.trim().length > 0).length;
+  if (replaced < expected) {
+    throw new Error(`Word no pudo aplicar ${expected - replaced} segmentos. El archivo no se generó para evitar contenido incompleto.`);
+  }
 
   const mime = input.kind === "docx" ? DOCX_MIME : PPTX_MIME;
   const blob = await zip.generateAsync({ type: "blob", mimeType: mime, compression: "DEFLATE" });
