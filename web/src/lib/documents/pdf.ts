@@ -178,6 +178,8 @@ const LATIN_FALLBACKS: Record<string, string> = {
 export function sanitizeForWinAnsi(value: string): { text: string; dropped: boolean } {
   let dropped = false;
   const mapped = value.replace(/[\u2018\u2019\u201A\u201C\u201D\u2013\u2014\u2212\u2026\u00A0\u2022\u2265\u2264\u00B5\u03BC\u2192\u2009\u202F]/g, (char) => LATIN_FALLBACKS[char] ?? char);
+  // The explicit control-character range preserves tabs and line breaks in PDF text.
+  // eslint-disable-next-line no-control-regex
   const safe = mapped.replace(/[^\u0009\u000A\u000D\u0020-\u007E\u00A1-\u00FF\u0152\u0153\u0160\u0161\u0178\u017D\u017E\u0192\u02C6\u02DC\u2030\u2039\u203A\u20AC\u2122]/g, () => {
     dropped = true;
     return "";
@@ -186,7 +188,22 @@ export function sanitizeForWinAnsi(value: string): { text: string; dropped: bool
 }
 
 function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
+  const words = text.split(/\s+/).filter(Boolean).flatMap((word) => {
+    if (font.widthOfTextAtSize(word, size) <= maxWidth) return [word];
+    const pieces: string[] = [];
+    let piece = "";
+    for (const char of word) {
+      const candidate = `${piece}${char}`;
+      if (piece && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+        pieces.push(piece);
+        piece = char;
+      } else {
+        piece = candidate;
+      }
+    }
+    if (piece) pieces.push(piece);
+    return pieces;
+  });
   const lines: string[] = [];
   let line = "";
   for (const word of words) {
@@ -255,9 +272,24 @@ export async function buildTranslatedPdf(options: OverlayOptions): Promise<{ blo
     let size = baseSize;
     let wrapped = wrapText(text, font, size, maxWidth);
     const maxLines = block.lines.length;
-    while (wrapped.length > maxLines && size > baseSize * 0.62) {
-      size = Math.max(baseSize * 0.62, size - 0.4);
+    while (wrapped.length > maxLines && size > baseSize * 0.5) {
+      size = Math.max(baseSize * 0.5, size - 0.35);
       wrapped = wrapText(text, font, size, maxWidth);
+    }
+
+    if (wrapped.length > maxLines) {
+      warnings.push(
+        `La traducción del bloque ${block.id} excede su espacio original; se ajustó al máximo sin invadir otros elementos.`,
+      );
+      wrapped = wrapped.slice(0, maxLines);
+      const last = wrapped.length - 1;
+      if (last >= 0 && !wrapped[last].endsWith("…")) {
+        let shortened = wrapped[last];
+        while (shortened.length > 1 && font.widthOfTextAtSize(`${shortened}…`, size) > maxWidth) {
+          shortened = shortened.slice(0, -1);
+        }
+        wrapped[last] = `${shortened.trimEnd()}…`;
+      }
     }
 
     const startY = baselines[0];

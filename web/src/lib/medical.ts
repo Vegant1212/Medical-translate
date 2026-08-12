@@ -282,6 +282,7 @@ REGLAS DE FORMATO CRÍTICAS:
 - Traduce cada segmento por separado y devuelve exactamente el mismo "id".
 - No fusiones ni dividas segmentos. No añadas comentarios.
 - Conserva números, códigos, DOI, URLs, nombres propios, referencias tipo "(1)" o "[12]" y espacios inicial/final del segmento.
+- Nunca traduzcas entradas bibliográficas, títulos de artículos dentro de una referencia, nombres de revistas, autores, DOI, PMID ni URLs. Devuelve esas entradas idénticas carácter por carácter.
 - Si un segmento no debe traducirse (número, código, símbolo, sigla ya válida), devuélvelo idéntico.
 - Sé conciso: el texto traducido debe tener una longitud similar al original para no romper la maquetación.
 
@@ -362,6 +363,78 @@ export async function translateSegments(input: {
   ]);
 
   return { ...leftMap, ...rightMap };
+}
+
+/** Final editorial pass for translated document segments, including PDF extraction spacing defects. */
+async function reviewOneTranslationBatch(
+  segments: { id: string; source: string; translation: string }[],
+  input: {
+    targetLanguage: string;
+    targetVariant?: string;
+    register: RegisterLevel;
+    domain: MedicalDomain;
+    signal?: AbortSignal;
+  },
+): Promise<Record<string, string>> {
+  const system = `${BASE_ROLE}
+
+TAREA: revisión ortográfica y tipográfica FINAL de segmentos ya traducidos a ${localeDescriptor(input.targetLanguage, input.targetVariant)}.
+REGISTRO: ${registerInstruction(input.register)}
+${domainInstruction(input.domain)}
+
+REGLAS CRÍTICAS:
+- Corrige palabras pegadas o separadas incorrectamente por la extracción de un PDF, usando el original y el contexto para reconstruirlas.
+- Corrige ortografía, tildes, puntuación, concordancia y espacios, sin cambiar el significado médico.
+- Conserva exactamente cifras, dosis, unidades, intervalos, símbolos, códigos, DOI, PMID, URLs, marcadores y llamadas de cita como [12] o (3).
+- No traduzcas ni reformules bibliografía. Si detectas una referencia bibliográfica, devuélvela idéntica.
+- Conserva cada "id"; no unas ni dividas segmentos y mantén una longitud parecida para respetar la caja del PDF.
+- Si un segmento ya es correcto, devuélvelo sin cambios.
+
+PROHIBIDO: comentarios, explicaciones o texto fuera del JSON.
+Devuelve exclusivamente: [{"id":"p1","t":"texto final corregido"}]`;
+
+  const result = await chatJson<{ id: string; t: string }[]>(
+    [
+      { role: "system", content: system },
+      { role: "user", content: JSON.stringify(segments) },
+    ],
+    { temperature: 0.05, maxTokens: 16000, signal: input.signal },
+  );
+
+  const map: Record<string, string> = {};
+  for (const item of Array.isArray(result) ? result : []) {
+    if (typeof item?.id === "string" && typeof item?.t === "string") map[item.id] = item.t;
+  }
+  for (const segment of segments) {
+    if (!(segment.id in map)) map[segment.id] = segment.translation;
+  }
+  return map;
+}
+
+export async function reviewTranslatedSegments(input: {
+  segments: { id: string; source: string; translation: string }[];
+  targetLanguage: string;
+  targetVariant?: string;
+  register: RegisterLevel;
+  domain: MedicalDomain;
+  signal?: AbortSignal;
+}): Promise<Record<string, string>> {
+  if (input.segments.length === 0) return {};
+  try {
+    return await reviewOneTranslationBatch(input.segments, input);
+  } catch (error) {
+    if (input.segments.length === 1) {
+      console.warn("reviewTranslatedSegments: preserving reviewed fallback", error);
+      return { [input.segments[0].id]: input.segments[0].translation };
+    }
+  }
+
+  const middle = Math.ceil(input.segments.length / 2);
+  const [left, right] = await Promise.all([
+    reviewTranslatedSegments({ ...input, segments: input.segments.slice(0, middle) }),
+    reviewTranslatedSegments({ ...input, segments: input.segments.slice(middle) }),
+  ]);
+  return { ...left, ...right };
 }
 
 /** Rewrites a passage at a different complexity level within the same language. */

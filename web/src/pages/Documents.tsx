@@ -6,6 +6,8 @@ import {
   Check,
   Download,
   FileText,
+  FolderOpen,
+  History,
   Languages,
   Layers,
   Presentation,
@@ -13,7 +15,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
@@ -33,8 +35,15 @@ import {
   type ParsedDocument,
 } from "@/lib/documents";
 import { NON_LATIN_LANGUAGES, languageLabel } from "@/lib/languages";
-import { translateSegments } from "@/lib/medical";
+import { reviewTranslatedSegments, translateSegments } from "@/lib/medical";
 import { cn } from "@/lib/utils";
+import {
+  deleteDocumentProject,
+  listDocumentProjects,
+  loadDocumentProject,
+  saveDocumentProject,
+  type SavedDocumentProject,
+} from "@/lib/project-history";
 
 const KIND_META: Record<DocKind, { label: string; icon: typeof FileText; note: string }> = {
   pdf: {
@@ -68,6 +77,48 @@ export default function DocumentsPage() {
   const [dragging, setDragging] = useState<boolean>(false);
   const [exportWarnings, setExportWarnings] = useState<string[]>([]);
   const [translateStart, setTranslateStart] = useState<number>(0);
+  const [currentProjectId, setCurrentProjectId] = useState<string | undefined>(undefined);
+  const [projects, setProjects] = useState<SavedDocumentProject[]>([]);
+
+  const refreshProjects = useCallback(async (): Promise<void> => {
+    try {
+      setProjects(await listDocumentProjects());
+    } catch (error) {
+      console.error("project history load failed", error);
+      toast.error("No se pudo cargar el historial de proyectos.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProjects();
+  }, [refreshProjects]);
+
+  const persistProject = useCallback(
+    async (
+      parsed: ParsedDocument,
+      nextTranslations: Record<string, string>,
+      nextEdited: Record<string, boolean>,
+      id = currentProjectId ?? crypto.randomUUID(),
+    ): Promise<string> => {
+      const previous = projects.find((project) => project.id === id);
+      const now = Date.now();
+      await saveDocumentProject({
+        id,
+        name: parsed.fileName.replace(/\.(pdf|docx|pptx)$/i, ""),
+        createdAt: previous?.createdAt ?? now,
+        updatedAt: now,
+        document: parsed,
+        translations: nextTranslations,
+        edited: nextEdited,
+        sourceLanguage: settings.sourceLanguage,
+        targetLanguage: settings.targetLanguage,
+      });
+      setCurrentProjectId(id);
+      await refreshProjects();
+      return id;
+    },
+    [currentProjectId, projects, refreshProjects, settings.sourceLanguage, settings.targetLanguage],
+  );
 
   const parse = useMutation({
     mutationFn: (file: File) => parseDocument(file),
@@ -77,6 +128,12 @@ export default function DocumentsPage() {
       setEdited({});
       setProgress({ done: 0, total: 0 });
       setExportWarnings([]);
+      const id = crypto.randomUUID();
+      setCurrentProjectId(id);
+      void persistProject(parsed, {}, {}, id).catch((error) => {
+        console.error("initial project save failed", error);
+        toast.error("El documento abrió, pero no pudo guardarse en el historial.");
+      });
       toast.success(`${parsed.segments.length} segmentos listos para traducir`);
     },
     onError: (error: unknown) => {
@@ -88,9 +145,14 @@ export default function DocumentsPage() {
   const translate = useMutation({
     mutationFn: async (): Promise<number> => {
       if (!document) throw new Error("Sube un documento primero.");
-      const batches = batchSegments(document.segments);
-      setProgress({ done: 0, total: document.segments.length });
-      let done = 0;
+      const protectedSegments = document.segments.filter((segment) => segment.protectedReason === "bibliography");
+      const translatableSegments = document.segments.filter((segment) => !segment.protectedReason);
+      const batches = batchSegments(translatableSegments);
+      const protectedMap = Object.fromEntries(protectedSegments.map((segment) => [segment.id, segment.text]));
+      const translatedMap: Record<string, string> = {};
+      setTranslations((previous) => ({ ...previous, ...protectedMap }));
+      setProgress({ done: protectedSegments.length, total: document.segments.length });
+      let done = protectedSegments.length;
       for (const batch of batches) {
         const map = await translateSegments({
           segments: batch.map((segment) => ({ id: segment.id, text: segment.text })),
@@ -101,14 +163,39 @@ export default function DocumentsPage() {
           domain: settings.domain,
           glossary: settings.glossaryPairs,
         });
+        Object.assign(translatedMap, map);
         setTranslations((previous) => ({ ...previous, ...map }));
         done += batch.length;
         setProgress({ done, total: document.segments.length });
       }
-      return done;
+
+      // A final model pass fixes spelling, punctuation and PDF-extraction artifacts
+      // such as words incorrectly joined together, without touching bibliography.
+      const reviewBatches = batchSegments(
+        translatableSegments.map((segment) => ({
+          id: segment.id,
+          text: translatedMap[segment.id] ?? segment.text,
+          source: segment.text,
+          translation: translatedMap[segment.id] ?? segment.text,
+        })),
+      );
+      for (const batch of reviewBatches) {
+        const reviewed = await reviewTranslatedSegments({
+          segments: batch.map(({ id, source, translation }) => ({ id, source, translation })),
+          targetLanguage: settings.targetLanguage,
+          targetVariant: settings.variants[settings.targetLanguage],
+          register: settings.register,
+          domain: settings.domain,
+        });
+        Object.assign(translatedMap, reviewed);
+        setTranslations((previous) => ({ ...previous, ...reviewed }));
+      }
+      await persistProject(document, { ...protectedMap, ...translatedMap }, edited);
+      return translatableSegments.length;
     },
     onMutate: () => setTranslateStart(Date.now()),
-    onSuccess: (count) => toast.success(`${count} segmentos traducidos`),
+    onSuccess: (count) =>
+      toast.success(`${count} segmentos traducidos y revisados; bibliografía conservada sin cambios`),
     onError: (error: unknown) => {
       console.error("document translation failed", error);
       toast.error(error instanceof Error ? error.message : "La traducción del documento falló.");
@@ -183,6 +270,7 @@ export default function DocumentsPage() {
                 setDocument(undefined);
                 setTranslations({});
                 setEdited({});
+                setCurrentProjectId(undefined);
               }}
               className="h-9 gap-1.5 px-2.5 text-[12.5px] text-muted-foreground hover:text-destructive"
             >
@@ -442,6 +530,13 @@ export default function DocumentsPage() {
                                     setTranslations((previous) => ({ ...previous, [segment.id]: event.target.value }));
                                     setEdited((previous) => ({ ...previous, [segment.id]: true }));
                                   }}
+                                  onBlur={() => {
+                                    if (document && currentProjectId) {
+                                      void persistProject(document, translations, edited).catch(() =>
+                                        toast.error("No se pudo guardar el último cambio en el historial."),
+                                      );
+                                    }
+                                  }}
                                   placeholder="Sin traducir"
                                   className={cn(
                                     "min-h-[76px] resize-y rounded-lg border-border/70 bg-elevated/50 text-[12.5px] leading-relaxed",
@@ -461,6 +556,76 @@ export default function DocumentsPage() {
           </motion.div>
         )}
       </div>
+
+      <Panel
+        title="Historial de proyectos"
+        meta={`${projects.length} guardado${projects.length === 1 ? "" : "s"} en este navegador`}
+        className="mx-auto mt-5 max-w-[1400px]"
+      >
+        {projects.length === 0 ? (
+          <div className="flex flex-col items-center justify-center px-4 py-10 text-center text-muted-foreground">
+            <History className="mb-3 h-8 w-8 opacity-50" />
+            <p className="text-sm">Los documentos que abras aparecerán aquí automáticamente.</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-border/60">
+            {projects.map((project) => {
+              const completed = project.document.segments.filter((segment) => project.translations[segment.id]).length;
+              return (
+                <li key={project.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{project.name}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {project.document.kind.toUpperCase()} · {completed}/{project.document.segments.length} segmentos · Actualizado {new Date(project.updatedAt).toLocaleString("es-MX")}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                      onClick={() => {
+                        void loadDocumentProject(project)
+                          .then((loaded) => {
+                            setDocument(loaded.document);
+                            setTranslations(loaded.translations);
+                            setEdited(loaded.edited);
+                            setCurrentProjectId(loaded.id);
+                            setProgress({ done: 0, total: 0 });
+                            setExportWarnings([]);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                            toast.success(`Proyecto «${loaded.name}» recuperado`);
+                          })
+                          .catch(() => toast.error("No se pudo descargar el proyecto."));
+                      }}
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" /> Retomar
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="gap-1.5 text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        void deleteDocumentProject(project.id)
+                          .then(async () => {
+                            if (currentProjectId === project.id) setCurrentProjectId(undefined);
+                            await refreshProjects();
+                            toast.success("Proyecto borrado del historial");
+                          })
+                          .catch(() => toast.error("No se pudo borrar el proyecto."));
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Borrar
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Panel>
     </AppShell>
   );
 }

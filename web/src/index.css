@@ -37,6 +37,8 @@
     --warn: 40 90% 61%;
     --bad: 6 88% 64%;
     --info: 205 95% 68%;
+    --violet: 272 88% 72%;
+    --coral: 347 88% 68%;
 
     --border: 203 26% 16%;
     --input: 203 26% 18%;
@@ -68,15 +70,19 @@
     @apply bg-background text-foreground font-sans;
     background-image:
       radial-gradient(1100px 620px at 8% -12%, hsl(164 66% 50% / 0.11), transparent 62%),
-      radial-gradient(900px 520px at 102% -4%, hsl(205 95% 55% / 0.08), transparent 58%),
+      radial-gradient(900px 520px at 102% -4%, hsl(205 95% 55% / 0.12), transparent 58%),
+      radial-gradient(760px 520px at 88% 88%, hsl(272 88% 62% / 0.09), transparent 62%),
+      radial-gradient(640px 420px at 18% 104%, hsl(347 88% 60% / 0.055), transparent 60%),
       linear-gradient(hsl(var(--border) / 0.4) 1px, transparent 1px),
       linear-gradient(90deg, hsl(var(--border) / 0.4) 1px, transparent 1px);
     background-size:
       auto,
       auto,
+      auto,
+      auto,
       68px 68px,
       68px 68px;
-    background-attachment: fixed, fixed, fixed, fixed;
+    background-attachment: fixed, fixed, fixed, fixed, fixed, fixed;
   }
 
   ::selection {
@@ -104,11 +110,32 @@
 
 @layer components {
   .panel {
-    @apply rounded-2xl border border-border/80 bg-surface/70 shadow-panel backdrop-blur-xl;
+    @apply rounded-2xl border border-border/80 shadow-panel backdrop-blur-xl;
+    background: linear-gradient(145deg, hsl(var(--surface) / 0.9), hsl(var(--elevated) / 0.72));
+    box-shadow:
+      0 1px 0 hsl(var(--info) / 0.06) inset,
+      0 24px 60px -32px hsl(var(--violet) / 0.16);
   }
 
   .panel-flat {
-    @apply rounded-xl border border-border/70 bg-elevated/60;
+    @apply rounded-xl border border-border/70;
+    background: linear-gradient(135deg, hsl(var(--elevated) / 0.82), hsl(var(--surface) / 0.7));
+  }
+
+  .panel:hover {
+    border-color: hsl(var(--primary) / 0.24);
+  }
+
+  input:focus-visible,
+  textarea:focus-visible,
+  button:focus-visible,
+  a:focus-visible {
+    outline-color: hsl(var(--info));
+  }
+
+  input:hover,
+  textarea:hover {
+    border-color: hsl(var(--info) / 0.3);
   }
 
   .hairline {

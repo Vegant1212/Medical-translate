@@ -1,13 +1,14 @@
-/**
- * Thin client for the Rork Toolkit proxy (AI chat completions + Exa web search).
- * Browser builds get delegated auth injected by the runtime, so no key is sent here.
- */
+/** Cliente del proxy privado de IA. La clave de OpenAI nunca llega al navegador. */
+
+import { supabase } from "@/lib/supabase";
 
 const TOOLKIT_URL: string =
   ((import.meta.env.EXPO_PUBLIC_TOOLKIT_URL as string | undefined) ?? "https://toolkit.rork.com").replace(/\/$/, "");
 
+const OPENAI_CHAT_URL = "/api/openai/chat";
+
 /** Model used for every medical language task. */
-export const MEDICAL_MODEL = "google/gemini-3-flash" as const;
+export const MEDICAL_MODEL = "openai/local-secure-proxy" as const;
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -28,9 +29,17 @@ interface ChatCompletionResponse {
 
 /** Sends a chat completion request through the proxy and returns the raw text. */
 export async function chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
-  const response = await fetch(`${TOOLKIT_URL}/v2/vercel/v1/chat/completions`, {
+  const { data: sessionData } = await supabase.auth.getSession();
+  if (!sessionData.session?.access_token) {
+    throw new Error("Tu sesión venció. Inicia sesión de nuevo para continuar.");
+  }
+
+  const response = await fetch(OPENAI_CHAT_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${sessionData.session.access_token}`,
+      "Content-Type": "application/json",
+    },
     signal: options.signal,
     body: JSON.stringify({
       model: options.model ?? MEDICAL_MODEL,
@@ -153,7 +162,9 @@ export function parseJson<T>(raw: string): T {
 
   // Strategy 1: Use proper bracket-matching to find the first complete JSON value.
   for (const candidate of candidates) {
-    const start = candidate.search(/[\[{]/);
+    const arrayStart = candidate.indexOf("[");
+    const objectStart = candidate.indexOf("{");
+    const start = arrayStart < 0 ? objectStart : objectStart < 0 ? arrayStart : Math.min(arrayStart, objectStart);
     if (start < 0) continue;
     const end = findMatchingBracket(candidate, start);
     if (end > start) {

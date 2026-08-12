@@ -32,6 +32,8 @@ export default {
         warn: "hsl(var(--warn))",
         bad: "hsl(var(--bad))",
         info: "hsl(var(--info))",
+        violet: "hsl(var(--violet))",
+        coral: "hsl(var(--coral))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",

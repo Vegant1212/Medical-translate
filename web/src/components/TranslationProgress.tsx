@@ -36,6 +36,15 @@ const DOC_STAGES: ProgressStage[] = [
   { id: "verify", label: "Verificación clínica", hint: "Lista ISMP · ambigüedades · coherencia", icon: ShieldCheck },
 ];
 
+const STAGE_COLORS = ["var(--info)", "var(--primary)", "var(--violet)", "var(--warn)"] as const;
+
+function formatMinutes(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 export interface TranslationProgressProps {
   /** Elapsed milliseconds since the translation started. */
   startTime: number;
@@ -71,7 +80,7 @@ export function TranslationProgress({
     if (!active) return;
     const interval = window.setInterval(() => {
       setElapsed(Date.now() - startTime);
-    }, 50);
+    }, 500);
     return () => window.clearInterval(interval);
   }, [active, startTime]);
 
@@ -100,7 +109,7 @@ export function TranslationProgress({
     }
   }, [active]);
 
-  const seconds = (elapsed / 1000).toFixed(1);
+  const minutes = formatMinutes(elapsed);
 
   // Overall progress (0..1)
   const overallProgress = isDocMode
@@ -135,6 +144,16 @@ export function TranslationProgress({
           animate={{ scale: [1, 1.15, 1], opacity: [0.6, 1, 0.6] }}
           transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
         />
+        <motion.div
+          className="absolute -left-16 top-1/3 h-52 w-52 rounded-full bg-info/10 blur-3xl"
+          animate={{ x: [-12, 20, -12], y: [4, -16, 4] }}
+          transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <motion.div
+          className="absolute -right-16 bottom-0 h-52 w-52 rounded-full bg-violet/10 blur-3xl"
+          animate={{ x: [12, -18, 12], y: [-5, 14, -5] }}
+          transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
+        />
       </motion.div>
 
       {/* ── Central orb with percentage ── */}
@@ -163,6 +182,13 @@ export function TranslationProgress({
           viewBox="0 0 160 160"
           style={{ transform: "rotate(-90deg)" }}
         >
+          <defs>
+            <linearGradient id="translation-progress-gradient" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="hsl(var(--info))" />
+              <stop offset="45%" stopColor="hsl(var(--primary))" />
+              <stop offset="100%" stopColor="hsl(var(--violet))" />
+            </linearGradient>
+          </defs>
           <circle
             cx="80"
             cy="80"
@@ -177,8 +203,8 @@ export function TranslationProgress({
             cy="80"
             r="70"
             fill="none"
-            stroke="hsl(var(--primary))"
-            strokeWidth="3"
+            stroke="url(#translation-progress-gradient)"
+            strokeWidth="5"
             strokeLinecap="round"
             strokeDasharray={2 * Math.PI * 70}
             animate={{
@@ -206,30 +232,18 @@ export function TranslationProgress({
           {/* Big percentage in the center */}
           <motion.div
             key={displayPercent}
-            className="font-mono text-[28px] font-bold tabular-nums text-primary"
+            className="bg-gradient-to-br from-info via-primary to-violet bg-clip-text font-mono text-[44px] font-bold leading-none tabular-nums text-transparent"
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
           >
             {displayPercent}
-            <span className="text-[14px]">%</span>
+            <span className="ml-0.5 text-[19px]">%</span>
           </motion.div>
           <div className="mt-0.5 font-mono text-[8px] uppercase tracking-[0.2em] text-muted-foreground">
             {isDocMode ? "segmentos" : "progreso"}
           </div>
 
-          {/* Orbiting dot */}
-          <motion.div
-            className="absolute h-2 w-2 rounded-full bg-primary"
-            style={{ top: "50%", left: "50%", marginLeft: "-4px", marginTop: "-4px" }}
-            animate={{ rotate: 360 }}
-            transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-          >
-            <div
-              className="absolute h-2 w-2 rounded-full bg-primary"
-              style={{ left: "58px", top: "0px" }}
-            />
-          </motion.div>
         </motion.div>
       </div>
 
@@ -253,7 +267,7 @@ export function TranslationProgress({
           className="absolute inset-y-0 left-0 rounded-full"
           style={{
             background:
-              "linear-gradient(90deg, hsl(var(--primary) / 0.4), hsl(var(--primary)), hsl(var(--primary) / 0.6))",
+              "linear-gradient(90deg, hsl(var(--info)), hsl(var(--primary)), hsl(var(--violet)), hsl(var(--warn)))",
             backgroundSize: "200% 100%",
             boxShadow: "0 0 12px -2px hsl(var(--primary) / 0.5)",
           }}
@@ -286,6 +300,7 @@ export function TranslationProgress({
           const isActive = index === currentStage;
           const isPending = index > currentStage;
           const Icon = stage.icon;
+          const stageColor = STAGE_COLORS[index] ?? "var(--primary)";
 
           return (
             <motion.div
@@ -303,14 +318,14 @@ export function TranslationProgress({
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors"
                 style={{
                   borderColor: isDone
-                    ? "hsl(var(--primary) / 0.3)"
+                    ? `hsl(${stageColor} / 0.38)`
                     : isActive
-                      ? "hsl(var(--primary) / 0.5)"
+                      ? `hsl(${stageColor} / 0.65)`
                       : "hsl(var(--border) / 0.5)",
                   background: isDone
-                    ? "hsl(var(--primary) / 0.08)"
+                    ? `hsl(${stageColor} / 0.12)`
                     : isActive
-                      ? "hsl(var(--primary) / 0.06)"
+                      ? `hsl(${stageColor} / 0.14)`
                       : "transparent",
                 }}
               >
@@ -322,11 +337,11 @@ export function TranslationProgress({
                       animate={{ scale: 1, rotate: 0 }}
                       transition={{ type: "spring", stiffness: 300, damping: 20 }}
                     >
-                      <Check className="h-4 w-4 text-primary" strokeWidth={2.5} />
+                      <Check className="h-4 w-4" style={{ color: `hsl(${stageColor})` }} strokeWidth={2.5} />
                     </motion.div>
                   ) : isActive ? (
                     <motion.div key="active">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      <Loader2 className="h-4 w-4 animate-spin" style={{ color: `hsl(${stageColor})` }} />
                     </motion.div>
                   ) : (
                     <Icon
@@ -345,7 +360,7 @@ export function TranslationProgress({
                     color: isDone
                       ? "hsl(var(--foreground) / 0.7)"
                       : isActive
-                        ? "hsl(var(--primary))"
+                        ? `hsl(${stageColor})`
                         : "hsl(var(--muted-foreground))",
                   }}
                 >
@@ -366,7 +381,7 @@ export function TranslationProgress({
                   <motion.div
                     className="h-full rounded-full"
                     style={{
-                      background: "linear-gradient(90deg, transparent, hsl(var(--primary)), transparent)",
+                      background: `linear-gradient(90deg, transparent, hsl(${stageColor}), transparent)`,
                       backgroundSize: "50% 100%",
                     }}
                     animate={{ backgroundPosition: ["-50% 0", "150% 0"] }}
@@ -381,44 +396,42 @@ export function TranslationProgress({
 
       {/* ── Live metrics ── */}
       <motion.div
-        className="mt-7 flex items-center gap-6"
+        className="mt-7 grid w-full max-w-[420px] grid-cols-3 gap-2"
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
       >
-        <div className="text-center">
-          <div className="font-mono text-[18px] font-semibold tabular-nums text-primary">
-            {seconds}s
+        <div className="rounded-xl border border-info/20 bg-info/5 px-3 py-2.5 text-center">
+          <div className="font-mono text-[19px] font-semibold tabular-nums text-info">
+            {minutes}
           </div>
-          <div className="label-xs mt-0.5">tiempo</div>
+          <div className="label-xs mt-0.5">minutos</div>
         </div>
-        <div className="h-8 w-px bg-border/60" />
         {isDocMode ? (
-          <div className="text-center">
-            <div className="font-mono text-[18px] font-semibold tabular-nums text-foreground">
+          <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 text-center">
+            <div className="font-mono text-[19px] font-semibold tabular-nums text-primary">
               {doneUnits ?? 0}
               <span className="text-muted-foreground">/{totalUnits ?? 0}</span>
             </div>
             <div className="label-xs mt-0.5">segmentos</div>
           </div>
         ) : (
-          <div className="text-center">
-            <div className="font-mono text-[18px] font-semibold tabular-nums text-foreground">
+          <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 text-center">
+            <div className="font-mono text-[19px] font-semibold tabular-nums text-primary">
               {charCount.toLocaleString()}
             </div>
             <div className="label-xs mt-0.5">caracteres</div>
           </div>
         )}
-        <div className="h-8 w-px bg-border/60" />
-        <div className="text-center">
-          <div className="font-mono text-[18px] font-semibold tabular-nums text-foreground">
+        <div className="rounded-xl border border-violet/20 bg-violet/5 px-3 py-2.5 text-center">
+          <div className="font-mono text-[19px] font-semibold tabular-nums text-violet">
             {isDocMode && totalUnits
-              ? `${Math.round((elapsed / 1000) / Math.max(doneUnits ?? 1, 1) * 10) / 10}s/seg`
+              ? `${((elapsed / 60000) / Math.max(doneUnits ?? 1, 1)).toFixed(2)}`
               : charsPerSec > 0
                 ? charsPerSec.toFixed(0)
                 : "—"}
           </div>
-          <div className="label-xs mt-0.5">{isDocMode ? "ritmo" : "car/s"}</div>
+          <div className="label-xs mt-0.5">{isDocMode ? "min/segmento" : "car/s"}</div>
         </div>
       </motion.div>
     </motion.div>
