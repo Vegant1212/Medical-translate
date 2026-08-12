@@ -1,7 +1,11 @@
 const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "").replace(/\/$/, "");
 const PROTECTED_TOKEN = /https?:\/\/[^\s)\]}]+|\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+|\d+(?:[.,]\d+)?/gi;
-const MAX_BATCH_SEGMENTS = 12;
-const MAX_BATCH_CHARS = 9_000;
+// Keep documents below the Gateway's request-rate ceiling. The previous
+// 12-row batches made a 321-segment PDF require about 27 requests and the
+// free route started returning 503 halfway through. These limits cut that to
+// roughly 14 requests while staying well below the API's payload ceiling.
+const MAX_BATCH_SEGMENTS = 24;
+const MAX_BATCH_CHARS = 16_000;
 const MAX_BATCH_ATTEMPTS = 3;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 

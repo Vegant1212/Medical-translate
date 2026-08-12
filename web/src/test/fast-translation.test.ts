@@ -8,6 +8,29 @@ afterEach(() => {
 });
 
 describe("translateFastSegments", () => {
+  it("uses larger document batches to stay below the Gateway request-rate ceiling", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { texts: { id: string; text: string }[] };
+      return new Response(JSON.stringify({
+        translations: body.texts.map((item) => ({ id: item.id, text: `T:${item.text}` })),
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const segments = Array.from({ length: 321 }, (_, index) => ({
+      id: `segment-${index}`,
+      text: `Clinical document row ${index}`,
+    }));
+    const result = await translateFastSegments({
+      segments,
+      sourceLanguage: "en",
+      targetLanguage: "es",
+    });
+
+    expect(Object.keys(result)).toHaveLength(321);
+    expect(fetchMock).toHaveBeenCalledTimes(14);
+  });
+
   it("requeues ids omitted by a successful response", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ translations: [{ id: "a", text: "Uno" }] }), { status: 200 }))
