@@ -62,6 +62,28 @@ describe("translateFastSegments", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("restores protected clinical values when a local model spaces the marker", async () => {
+    class FakeWorker {
+      onmessage?: (event: MessageEvent) => void;
+      postMessage(message: { requestId: string; segments: { id: string; text: string }[] }) {
+        queueMicrotask(() => {
+          const spaced = message.segments[0].text.replace(/ZXQ([A-Z]+)QXZ/g, "Z X Q $1 Q X Z");
+          this.onmessage?.({ data: { type: "translation", requestId: message.requestId, id: "a", text: spaced } } as MessageEvent);
+          this.onmessage?.({ data: { type: "complete", requestId: message.requestId } } as MessageEvent);
+        });
+      }
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", FakeWorker);
+
+    await expect(translateFastSegments({
+      segments: [{ id: "a", text: "Dose 5 mg; DOI 10.1000/ABC.2" }],
+      sourceLanguage: "en",
+      targetLanguage: "es",
+      requireLocal: true,
+    })).resolves.toEqual({ a: "Dose 5 mg; DOI 10.1000/ABC.2" });
+  });
+
   it("uses larger document batches to stay below the Gateway request-rate ceiling", async () => {
     const fetchMock = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as { texts: { id: string; text: string }[] };

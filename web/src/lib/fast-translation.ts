@@ -70,7 +70,13 @@ function protectTokens(text: string): { text: string; restore: (translation: str
   return {
     text: masked,
     restore: (translation) => values.reduce(
-      (result, item) => result.replace(new RegExp(item.marker, "gi"), item.value),
+      // SentencePiece models can render an unknown marker as "ZXQ A QXZ".
+      // Match optional separators between its characters so the original
+      // number, dose, DOI or URL is always restored byte-for-byte.
+      (result, item) => result.replace(
+        new RegExp(item.marker.split("").join("[\\s._-]*"), "gi"),
+        item.value,
+      ),
       translation,
     ),
   };
