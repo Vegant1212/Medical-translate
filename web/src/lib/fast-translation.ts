@@ -2,8 +2,19 @@ const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) 
 const PROTECTED_TOKEN = /https?:\/\/[^\s)\]}]+|\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+|\d+(?:[.,]\d+)?/gi;
 const MAX_BATCH_SEGMENTS = 12;
 const MAX_BATCH_CHARS = 9_000;
-const MAX_BATCH_ATTEMPTS = 4;
+const MAX_BATCH_ATTEMPTS = 3;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+class TranslationBatchError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = "TranslationBatchError";
+  }
+}
+
+function isProviderUnavailable(error: unknown): boolean {
+  return error instanceof TranslationBatchError && error.status !== undefined && RETRYABLE_STATUS.has(error.status);
+}
 
 function letterCode(index: number): string {
   let value = index + 1;
@@ -82,7 +93,10 @@ async function translateBatch(input: {
       }));
     }
     if (!RETRYABLE_STATUS.has(response.status) || attempt === MAX_BATCH_ATTEMPTS - 1) {
-      throw new Error(data.error?.message ?? "No se pudo completar la traducción rápida.");
+      throw new TranslationBatchError(
+        data.error?.message ?? "No se pudo completar la traducción rápida.",
+        response.status,
+      );
     }
 
     // Vercel may omit Retry-After for both rate limits and upstream 5xx
@@ -119,6 +133,7 @@ export async function translateFastSegments(input: {
 
   const output: Record<string, string> = {};
   const queue = [...batches];
+  let consecutiveProviderFailures = 0;
   while (queue.length > 0) {
     const texts = queue.shift()!;
     let translations: { id: string; text: string }[];
@@ -131,8 +146,21 @@ export async function translateFastSegments(input: {
           signal: input.signal,
         });
     } catch (error) {
-      // A smaller payload is more likely to pass a congested free-tier route.
-      // Preserve progress by trying both halves before surfacing a final error.
+      // A 429/5xx means the provider is unavailable, not that the payload is
+      // too large. Splitting it created a retry storm and made recovery less
+      // likely. Stop after two failed batches and preserve all completed work.
+      if (isProviderUnavailable(error)) {
+        consecutiveProviderFailures += 1;
+        if (consecutiveProviderFailures >= 2) {
+          throw new Error("OpenAI no está disponible temporalmente. El avance quedó guardado; usa Reanudar cuando el servicio se restablezca.");
+        }
+        queue.push(texts);
+        await wait(12_000, input.signal);
+        continue;
+      }
+
+      // Only malformed or incomplete model output benefits from a smaller
+      // payload. Preserve progress by trying both halves.
       if (texts.length > 1) {
         const middle = Math.ceil(texts.length / 2);
         queue.unshift(texts.slice(0, middle), texts.slice(middle));
@@ -143,6 +171,7 @@ export async function translateFastSegments(input: {
       console.warn("single translation segment deferred", texts[0]?.id, error);
       continue;
     }
+    consecutiveProviderFailures = 0;
 
     const requestedIds = new Set(texts.map((item) => item.id));
     const partial: Record<string, string> = {};

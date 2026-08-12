@@ -22,15 +22,15 @@ describe("translateFastSegments", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("splits a failed multi-segment batch instead of dropping the rest", async () => {
+  it("stops a provider retry storm without splitting into single segments", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "saturado" } }), { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "saturado" } }), { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "saturado" } }), { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "saturado" } }), { status: 503 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ translations: [{ id: "a", text: "Uno" }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ translations: [{ id: "b", text: "Dos" }] }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "saturado" } }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "saturado" } }), { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const promise = translateFastSegments({
@@ -38,7 +38,9 @@ describe("translateFastSegments", () => {
       sourceLanguage: "en",
       targetLanguage: "es",
     });
+    const rejection = expect(promise).rejects.toThrow("El avance quedó guardado");
     await vi.runAllTimersAsync();
-    await expect(promise).resolves.toEqual({ a: "Uno", b: "Dos" });
+    await rejection;
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 });

@@ -4,6 +4,7 @@ const ALLOWED_MODELS = new Set([
   DEFAULT_MODEL,
   "openai/gpt-5.4-nano",
 ]);
+const OPENAI_FALLBACK_MODELS = ["openai/gpt-5-mini", "openai/gpt-4.1-mini"];
 const MAX_INPUT_CHARS = 220_000;
 const MAX_OUTPUT_TOKENS = 16_000;
 
@@ -84,6 +85,7 @@ export default async function handler(
             // This project uses the user's connected OpenAI account. Do not
             // route medical text to Alibaba, xAI, Azure or another provider.
             only: ["openai"],
+            models: OPENAI_FALLBACK_MODELS.filter((fallback) => fallback !== model),
           },
         },
         stream: false,

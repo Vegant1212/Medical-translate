@@ -3,6 +3,7 @@ const AI_GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
 // included monthly credit. Requests are deliberately serialized by the client
 // because free-tier accounts have a much lower concurrency limit.
 const FAST_MODEL = "openai/gpt-5.4-nano";
+const OPENAI_FALLBACK_MODELS = ["openai/gpt-5-mini", "openai/gpt-4.1-mini"];
 const MAX_TEXTS = 50;
 const MAX_CHARS = 45_000;
 
@@ -75,6 +76,9 @@ export default async function handler(
             // Keep document translation on the user's connected OpenAI
             // provider instead of silently routing to a different company.
             only: ["openai"],
+            // A temporary outage or restriction on one OpenAI model must not
+            // strand a document halfway through. Every fallback remains OpenAI.
+            models: OPENAI_FALLBACK_MODELS,
           },
         },
         stream: false,
