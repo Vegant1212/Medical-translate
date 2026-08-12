@@ -25,6 +25,7 @@ describe("translateFastSegments", () => {
       ],
       sourceLanguage: "en",
       targetLanguage: "es",
+      requireLocal: true,
     });
 
     expect(result.a).toContain("5");
@@ -32,6 +33,19 @@ describe("translateFastSegments", () => {
     expect(translate).toHaveBeenCalledTimes(2);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("fails immediately with clear guidance when local translation is required", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(translateFastSegments({
+      segments: [{ id: "a", text: "Clinical text" }],
+      sourceLanguage: "en",
+      targetLanguage: "es",
+      requireLocal: true,
+    })).rejects.toThrow("Google Chrome de escritorio");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("uses larger document batches to stay below the Gateway request-rate ceiling", async () => {

@@ -24,6 +24,10 @@ interface BuiltInTranslatorApi {
   create: (options: { sourceLanguage: string; targetLanguage: string }) => Promise<BuiltInTranslatorInstance>;
 }
 
+export function hasBuiltInDocumentTranslator(): boolean {
+  return typeof (globalThis as typeof globalThis & { Translator?: BuiltInTranslatorApi }).Translator !== "undefined";
+}
+
 class TranslationBatchError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message);
@@ -169,6 +173,7 @@ export async function translateFastSegments(input: {
   targetLanguage: string;
   targetVariant?: string;
   signal?: AbortSignal;
+  requireLocal?: boolean;
   onProgress?: (translations: Record<string, string>) => void;
 }): Promise<Record<string, string>> {
   const output: Record<string, string> = {};
@@ -178,6 +183,9 @@ export async function translateFastSegments(input: {
   // it has no per-document request quota, keeps medical text on the device,
   // and lets the optional clinical review remain a separate AI step.
   const localTranslator = await createBuiltInTranslator(input);
+  if (!localTranslator && input.requireLocal) {
+    throw new Error("Este navegador no incluye traducción local. Abre esta página en Google Chrome de escritorio (versión 138 o posterior) para completar el documento sin costo ni límites del Gateway.");
+  }
   if (localTranslator) {
     const deferred: { id: string; text: string }[] = [];
     try {
@@ -201,6 +209,9 @@ export async function translateFastSegments(input: {
       localTranslator.destroy?.();
     }
     if (deferred.length === 0) return output;
+    if (input.requireLocal) {
+      throw new Error(`El traductor local dejó ${deferred.length} segmentos pendientes. El avance quedó guardado; pulsa Completar pendientes para reintentarlos.`);
+    }
     remainingSegments = deferred;
   }
 

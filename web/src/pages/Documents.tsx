@@ -38,7 +38,7 @@ import {
 import { NON_LATIN_LANGUAGES, languageLabel } from "@/lib/languages";
 import { detectLanguageLocally } from "@/lib/language-detection";
 import { textToDocx } from "@/lib/docx-export";
-import { translateFastSegments } from "@/lib/fast-translation";
+import { hasBuiltInDocumentTranslator, translateFastSegments } from "@/lib/fast-translation";
 import { createLocalProject, loadLocalProject, newProjectId, saveLocalProjectLanguages, saveLocalProjectState } from "@/lib/project-history";
 import { isDocumentTranslationComplete, preservesDocumentTokens, verifyClinicalTranslations, type ClinicalVerificationIssue } from "@/lib/medical";
 import { cn } from "@/lib/utils";
@@ -214,6 +214,7 @@ export default function DocumentsPage() {
           targetLanguage: settings.targetLanguage,
           targetVariant: settings.variants[settings.targetLanguage],
           sourceLanguage: settings.sourceLanguage,
+          requireLocal: true,
           signal,
           onProgress: (partial) => {
             for (const segment of pending) {
@@ -503,6 +504,9 @@ export default function DocumentsPage() {
     document?.kind === "pdf" && NON_LATIN_LANGUAGES.includes(settings.targetLanguage)
       ? "El idioma destino usa un alfabeto no latino: para PDF conserva mejor el formato exportando a Word."
       : undefined;
+  const localTranslatorWarning = !hasBuiltInDocumentTranslator()
+    ? "Para completar documentos sin costo ni límites, abre esta página en Google Chrome de escritorio 138 o posterior. Este navegador no incluye el motor de traducción local."
+    : undefined;
 
   const meta = document ? KIND_META[document.kind] : undefined;
   const progressPercent =
@@ -727,7 +731,7 @@ export default function DocumentsPage() {
                       </div>
                     ) : null}
 
-                    {[...document.warnings, ...(nonLatinWarning ? [nonLatinWarning] : []), ...exportWarnings].map(
+                    {[...document.warnings, ...(localTranslatorWarning ? [localTranslatorWarning] : []), ...(nonLatinWarning ? [nonLatinWarning] : []), ...exportWarnings].map(
                       (warning) => (
                         <p key={warning} className="mt-3 flex gap-2 text-[12px] leading-relaxed text-warn">
                           <AlertTriangle className="mt-[2px] h-3.5 w-3.5 shrink-0" /> {warning}
