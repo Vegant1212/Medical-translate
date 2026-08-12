@@ -13,9 +13,9 @@ const CHAT_URL = LEGACY_TOOLKIT_URL
 const TOOLKIT_URL = LEGACY_TOOLKIT_URL ?? "https://toolkit.rork.com";
 
 /** Model used for every medical language task. */
-export const MEDICAL_MODEL = "alibaba/qwen3.7-flash" as const;
-export const FAST_TRANSLATION_MODEL = "xai/grok-4.1-fast-non-reasoning" as const;
-export const CLINICAL_REVIEW_MODEL = "openai/gpt-5.4-nano" as const;
+export const MEDICAL_MODEL = "openai/gpt-5.4-mini" as const;
+export const FAST_TRANSLATION_MODEL = "openai/gpt-5.4-nano" as const;
+export const CLINICAL_REVIEW_MODEL = "openai/gpt-5.4-mini" as const;
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -34,6 +34,19 @@ export interface ChatOptions {
 interface ChatCompletionResponse {
   choices?: { message?: { content?: string } }[];
   error?: { message?: string };
+}
+
+function gatewayErrorMessage(status: number): string {
+  if (status === 401 || status === 403) {
+    return "La conexión con tu cuenta de OpenAI necesita revisión en Vercel.";
+  }
+  if (status === 429) {
+    return "OpenAI está temporalmente saturado. Conservamos tu trabajo; espera unos segundos e inténtalo de nuevo.";
+  }
+  if (status >= 500) {
+    return "OpenAI no está disponible temporalmente. Conservamos tu trabajo; espera unos segundos e inténtalo de nuevo.";
+  }
+  return "OpenAI no pudo completar la petición. Inténtalo nuevamente.";
 }
 
 const CHAT_TIMEOUT_MS = 35_000;
@@ -104,11 +117,7 @@ export async function chat(messages: ChatMessage[], options: ChatOptions = {}): 
       await new Promise((resolve) => globalThis.setTimeout(resolve, 900 * (attempt + 1)));
       continue;
     }
-    throw new Error(
-      response.status === 429
-        ? "El servicio de IA está saturado. Espera unos segundos e inténtalo de nuevo."
-        : "No se pudo completar la petición de IA. Revisa tu conexión e inténtalo de nuevo.",
-    );
+    throw new Error(gatewayErrorMessage(response.status));
   }
   throw new Error("No se pudo completar la petición de IA después de varios intentos.");
 }

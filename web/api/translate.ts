@@ -70,6 +70,13 @@ export default async function handler(
         model: FAST_MODEL,
         temperature: 0,
         max_tokens: Math.max(1200, Math.min(10_000, texts.reduce((sum, item) => sum + item.text.length, 0) * 2)),
+        providerOptions: {
+          gateway: {
+            // Keep document translation on the user's connected OpenAI
+            // provider instead of silently routing to a different company.
+            only: ["openai"],
+          },
+        },
         stream: false,
         messages: [
           {

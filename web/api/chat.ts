@@ -1,9 +1,7 @@
 const AI_GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
-const DEFAULT_MODEL = "alibaba/qwen3.7-flash";
+const DEFAULT_MODEL = "openai/gpt-5.4-mini";
 const ALLOWED_MODELS = new Set([
   DEFAULT_MODEL,
-  "xai/grok-4.1-fast-non-reasoning",
-  "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
 ]);
 const MAX_INPUT_CHARS = 220_000;
@@ -81,6 +79,13 @@ export default async function handler(
           typeof body?.max_tokens === "number"
             ? Math.max(1, Math.min(MAX_OUTPUT_TOKENS, Math.floor(body.max_tokens)))
             : 8_000,
+        providerOptions: {
+          gateway: {
+            // This project uses the user's connected OpenAI account. Do not
+            // route medical text to Alibaba, xAI, Azure or another provider.
+            only: ["openai"],
+          },
+        },
         stream: false,
       }),
     });
