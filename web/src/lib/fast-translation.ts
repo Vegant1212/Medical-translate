@@ -77,7 +77,10 @@ async function translateBatch(input: {
         }),
       });
     } catch (error) {
-      if (input.signal?.aborted || attempt === MAX_BATCH_ATTEMPTS - 1) throw error;
+      if (input.signal?.aborted) throw error;
+      if (attempt === MAX_BATCH_ATTEMPTS - 1) {
+        throw new TranslationBatchError("No se pudo conectar con OpenAI.", 503);
+      }
       await wait(Math.min(12_000, 1_500 * 2 ** attempt), input.signal);
       continue;
     }

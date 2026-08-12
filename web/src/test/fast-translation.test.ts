@@ -43,4 +43,20 @@ describe("translateFastSegments", () => {
     await rejection;
     expect(fetchMock).toHaveBeenCalledTimes(6);
   });
+
+  it("treats repeated network failures as provider unavailability", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = translateFastSegments({
+      segments: [{ id: "a", text: "One" }, { id: "b", text: "Two" }],
+      sourceLanguage: "en",
+      targetLanguage: "es",
+    });
+    const rejection = expect(promise).rejects.toThrow("El avance quedó guardado");
+    await vi.runAllTimersAsync();
+    await rejection;
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
 });
