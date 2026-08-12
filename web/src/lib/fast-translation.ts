@@ -28,6 +28,16 @@ export function hasBuiltInDocumentTranslator(): boolean {
   return typeof (globalThis as typeof globalThis & { Translator?: BuiltInTranslatorApi }).Translator !== "undefined";
 }
 
+const FREE_MODEL_LANGUAGES = new Set(["en", "es", "fr", "pt"]);
+
+export function hasFreeDocumentTranslator(sourceLanguage: string | "auto", targetLanguage: string): boolean {
+  if (hasBuiltInDocumentTranslator()) return true;
+  if (sourceLanguage === "auto" || typeof Worker === "undefined") return false;
+  const source = browserLanguageCode(sourceLanguage);
+  const target = browserLanguageCode(targetLanguage);
+  return source !== target && FREE_MODEL_LANGUAGES.has(source) && FREE_MODEL_LANGUAGES.has(target);
+}
+
 class TranslationBatchError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message);
@@ -96,6 +106,76 @@ async function createBuiltInTranslator(input: {
     console.warn("built-in browser translator unavailable", error);
     return undefined;
   }
+}
+
+async function translateWithFreeBrowserModel(input: {
+  segments: { id: string; text: string }[];
+  sourceLanguage: string | "auto";
+  targetLanguage: string;
+  signal?: AbortSignal;
+  onStatus?: (message: string) => void;
+  onProgress?: (translations: Record<string, string>) => void;
+}): Promise<Record<string, string> | undefined> {
+  if (!hasFreeDocumentTranslator(input.sourceLanguage, input.targetLanguage)) {
+    return undefined;
+  }
+  const sourceLanguage = browserLanguageCode(input.sourceLanguage);
+  const targetLanguage = browserLanguageCode(input.targetLanguage);
+  const protectedSegments = input.segments.map((segment) => {
+    const protectedItem = protectTokens(segment.text);
+    return { id: segment.id, text: protectedItem.text, restore: protectedItem.restore };
+  });
+  const restorers = new Map(protectedSegments.map((segment) => [segment.id, segment.restore]));
+  const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const worker = new Worker("/local-translator.worker.js", { type: "module" });
+
+  return new Promise<Record<string, string>>((resolve, reject) => {
+    const output: Record<string, string> = {};
+    const cleanup = () => {
+      input.signal?.removeEventListener("abort", abort);
+      worker.terminate();
+    };
+    const abort = () => {
+      cleanup();
+      reject(new DOMException("La traducción fue cancelada.", "AbortError"));
+    };
+    input.signal?.addEventListener("abort", abort, { once: true });
+    worker.onerror = (event) => {
+      cleanup();
+      reject(new Error(event.message || "El motor local no pudo cargarse."));
+    };
+    worker.onmessage = (event: MessageEvent<{
+      type: "status" | "translation" | "complete" | "error";
+      requestId: string;
+      id?: string;
+      text?: string;
+      message?: string;
+    }>) => {
+      const message = event.data;
+      if (message.requestId !== requestId) return;
+      if (message.type === "status" && message.message) {
+        input.onStatus?.(message.message);
+      } else if (message.type === "translation" && message.id && message.text) {
+        const translated = restorers.get(message.id)?.(message.text) ?? message.text;
+        output[message.id] = translated;
+        input.onProgress?.({ [message.id]: translated });
+      } else if (message.type === "complete") {
+        cleanup();
+        resolve(output);
+      } else if (message.type === "error") {
+        cleanup();
+        reject(new Error(message.message || "El motor local no pudo completar la traducción."));
+      }
+    };
+    input.onStatus?.("Preparando motor local sin costo…");
+    worker.postMessage({
+      type: "translate",
+      requestId,
+      sourceLanguage,
+      targetLanguage,
+      segments: protectedSegments.map(({ id, text }) => ({ id, text })),
+    });
+  });
 }
 
 const wait = (milliseconds: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
@@ -174,6 +254,7 @@ export async function translateFastSegments(input: {
   targetVariant?: string;
   signal?: AbortSignal;
   requireLocal?: boolean;
+  onStatus?: (message: string) => void;
   onProgress?: (translations: Record<string, string>) => void;
 }): Promise<Record<string, string>> {
   const output: Record<string, string> = {};
@@ -183,10 +264,8 @@ export async function translateFastSegments(input: {
   // it has no per-document request quota, keeps medical text on the device,
   // and lets the optional clinical review remain a separate AI step.
   const localTranslator = await createBuiltInTranslator(input);
-  if (!localTranslator && input.requireLocal) {
-    throw new Error("Este navegador no incluye traducción local. Abre esta página en Google Chrome de escritorio (versión 138 o posterior) para completar el documento sin costo ni límites del Gateway.");
-  }
   if (localTranslator) {
+    input.onStatus?.("Traduciendo con el motor incluido en Chrome…");
     const deferred: { id: string; text: string }[] = [];
     try {
       for (const segment of input.segments) {
@@ -213,6 +292,29 @@ export async function translateFastSegments(input: {
       throw new Error(`El traductor local dejó ${deferred.length} segmentos pendientes. El avance quedó guardado; pulsa Completar pendientes para reintentarlos.`);
     }
     remainingSegments = deferred;
+  }
+
+  if (!localTranslator) {
+    try {
+      const freeTranslations = await translateWithFreeBrowserModel({
+        segments: remainingSegments,
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        signal: input.signal,
+        onStatus: input.onStatus,
+        onProgress: input.onProgress,
+      });
+      if (freeTranslations) return { ...output, ...freeTranslations };
+    } catch (error) {
+      if (input.signal?.aborted) throw error;
+      if (input.requireLocal) {
+        throw new Error(`No se pudo iniciar el motor local sin costo. ${error instanceof Error ? error.message : "Revisa la conexión para descargarlo por primera vez."}`);
+      }
+      console.warn("free browser translation unavailable", error);
+    }
+  }
+  if (input.requireLocal) {
+    throw new Error("La traducción local sin costo está disponible para español, inglés, francés y portugués. Selecciona el idioma de origen detectado para continuar.");
   }
 
   const batches: { id: string; text: string }[][] = [];

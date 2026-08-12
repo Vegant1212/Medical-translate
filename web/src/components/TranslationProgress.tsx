@@ -55,6 +55,8 @@ export interface TranslationProgressProps {
   doneUnits?: number;
   /** File name being translated — shown in document mode. */
   fileName?: string;
+  /** Live status from the active translation engine. */
+  statusMessage?: string;
   /** Cancels the active request. Used for text translations. */
   onCancel?: () => void;
 }
@@ -67,6 +69,7 @@ export function TranslationProgress({
   totalUnits,
   doneUnits,
   fileName,
+  statusMessage,
   onCancel,
 }: TranslationProgressProps) {
   const [elapsed, setElapsed] = useState<number>(0);
@@ -263,6 +266,12 @@ export function TranslationProgress({
             <span className="truncate">{fileName}</span>
           </span>
         </motion.div>
+      ) : null}
+
+      {isDocMode && statusMessage ? (
+        <p className="mb-4 max-w-[420px] text-center text-[12.5px] leading-relaxed text-muted-foreground" role="status">
+          {statusMessage}
+        </p>
       ) : null}
 
       {!isDocMode ? (

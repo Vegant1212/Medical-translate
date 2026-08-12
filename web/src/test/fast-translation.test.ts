@@ -35,16 +35,30 @@ describe("translateFastSegments", () => {
     expect(destroy).toHaveBeenCalledOnce();
   });
 
-  it("fails immediately with clear guidance when local translation is required", async () => {
+  it("uses the free browser worker when Chrome's translator is unavailable", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    class FakeWorker {
+      onmessage?: (event: MessageEvent) => void;
+      onerror?: (event: ErrorEvent) => void;
+      postMessage(message: { requestId: string; segments: { id: string; text: string }[] }) {
+        queueMicrotask(() => {
+          for (const segment of message.segments) {
+            this.onmessage?.({ data: { type: "translation", requestId: message.requestId, id: segment.id, text: `Gratis:${segment.text}` } } as MessageEvent);
+          }
+          this.onmessage?.({ data: { type: "complete", requestId: message.requestId } } as MessageEvent);
+        });
+      }
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", FakeWorker);
 
     await expect(translateFastSegments({
-      segments: [{ id: "a", text: "Clinical text" }],
+      segments: [{ id: "a", text: "Dose 5 mg" }],
       sourceLanguage: "en",
       targetLanguage: "es",
       requireLocal: true,
-    })).rejects.toThrow("Google Chrome de escritorio");
+    })).resolves.toEqual({ a: "Gratis:Dose 5 mg" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

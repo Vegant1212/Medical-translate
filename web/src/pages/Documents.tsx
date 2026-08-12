@@ -38,7 +38,7 @@ import {
 import { NON_LATIN_LANGUAGES, languageLabel } from "@/lib/languages";
 import { detectLanguageLocally } from "@/lib/language-detection";
 import { textToDocx } from "@/lib/docx-export";
-import { hasBuiltInDocumentTranslator, translateFastSegments } from "@/lib/fast-translation";
+import { hasBuiltInDocumentTranslator, hasFreeDocumentTranslator, translateFastSegments } from "@/lib/fast-translation";
 import { createLocalProject, loadLocalProject, newProjectId, saveLocalProjectLanguages, saveLocalProjectState } from "@/lib/project-history";
 import { isDocumentTranslationComplete, preservesDocumentTokens, verifyClinicalTranslations, type ClinicalVerificationIssue } from "@/lib/medical";
 import { cn } from "@/lib/utils";
@@ -145,6 +145,7 @@ export default function DocumentsPage() {
   const [dragging, setDragging] = useState<boolean>(false);
   const [exportWarnings, setExportWarnings] = useState<string[]>([]);
   const [translateStart, setTranslateStart] = useState<number>(0);
+  const [translationStatus, setTranslationStatus] = useState<string>("Preparando traducción…");
   const [clinicalIssues, setClinicalIssues] = useState<ClinicalVerificationIssue[] | undefined>();
   const blockingClinicalIssues = clinicalIssues?.filter((issue) => issue.severity === "alta") ?? [];
   const pdfClinicallyApproved = document?.kind !== "pdf" || (clinicalIssues !== undefined && blockingClinicalIssues.length === 0);
@@ -216,6 +217,7 @@ export default function DocumentsPage() {
           sourceLanguage: settings.sourceLanguage,
           requireLocal: true,
           signal,
+          onStatus: setTranslationStatus,
           onProgress: (partial) => {
             for (const segment of pending) {
               const value = partial[segment.id];
@@ -240,7 +242,10 @@ export default function DocumentsPage() {
       const completed = document.segments.filter(isComplete).length;
       return { completed: completed - initialDone, remaining: document.segments.length - completed };
     },
-    onMutate: () => setTranslateStart(Date.now()),
+    onMutate: () => {
+      setTranslateStart(Date.now());
+      setTranslationStatus("Preparando motor de traducción…");
+    },
     onSuccess: ({ completed, remaining }) => {
       if (remaining === 0) {
         toast.success("Documento traducido completamente");
@@ -504,8 +509,10 @@ export default function DocumentsPage() {
     document?.kind === "pdf" && NON_LATIN_LANGUAGES.includes(settings.targetLanguage)
       ? "El idioma destino usa un alfabeto no latino: para PDF conserva mejor el formato exportando a Word."
       : undefined;
-  const localTranslatorWarning = !hasBuiltInDocumentTranslator()
-    ? "Para completar documentos sin costo ni límites, abre esta página en Google Chrome de escritorio 138 o posterior. Este navegador no incluye el motor de traducción local."
+  const localTranslatorWarning = !hasFreeDocumentTranslator(settings.sourceLanguage, settings.targetLanguage)
+    ? "La traducción local sin costo admite español, inglés, francés y portugués. Para otros idiomas se necesita el servicio en línea."
+    : !translatedCount && !hasBuiltInDocumentTranslator()
+      ? "La primera vez se descargará el motor local de este par de idiomas; después quedará guardado en el navegador."
     : undefined;
 
   const meta = document ? KIND_META[document.kind] : undefined;
@@ -682,6 +689,7 @@ export default function DocumentsPage() {
                       totalUnits={progress.total}
                       doneUnits={progress.done}
                       fileName={document.fileName}
+                      statusMessage={translationStatus}
                       onCancel={cancelTranslation}
                     />
                   </Panel>
