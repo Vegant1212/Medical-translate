@@ -13,6 +13,7 @@ import {
   Video as VideoIcon,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import type { CSSProperties } from "react";
 
 import { Logo } from "@/components/Logo";
 import { CATALOG, CORE_LANGUAGE_CODES } from "@/lib/languages";
@@ -25,6 +26,7 @@ const MODULES = [
     detail:
       "Bidireccional entre español, inglés, portugués y francés, con variante por país y cuatro niveles: de lenguaje de paciente a artículo indexado.",
     badge: "Glosario automático",
+    color: "164 66% 50%",
   },
   {
     to: "/correccion",
@@ -33,6 +35,7 @@ const MODULES = [
     detail:
       "Revisa ortografía, tipografía médica y verifica cada abreviatura, sigla y acrónimo contra su uso correcto en contexto — con alerta ISMP de siglas peligrosas.",
     badge: "Doble check",
+    color: "205 95% 68%",
   },
   {
     to: "/terminologia",
@@ -41,6 +44,7 @@ const MODULES = [
     detail:
       "Todas las lecturas posibles ordenadas por probabilidad, uso por país, códigos normalizados y alerta de abreviaturas peligrosas.",
     badge: "Cotejo científico",
+    color: "266 76% 68%",
   },
   {
     to: "/documentos",
@@ -49,6 +53,7 @@ const MODULES = [
     detail:
       "PDF, Word y PowerPoint traducidos sobre el propio archivo: se conserva el diseño, se editan segmento a segmento y se descargan.",
     badge: "Formato intacto",
+    color: "40 90% 61%",
   },
   {
     to: "/video",
@@ -57,6 +62,7 @@ const MODULES = [
     detail:
       "Sube un vídeo o audio médico: se transcribe el audio, se generan subtítulos con timestamps y se traducen al idioma que elijas.",
     badge: "SRT · VTT · Bilingüe",
+    color: "14 88% 66%",
   },
   {
     to: "/citas",
@@ -65,6 +71,7 @@ const MODULES = [
     detail:
       "APA 7.ª, AMA 11.ª y Vancouver generadas desde un DOI, un PMID o texto libre, con validación en Crossref y PubMed.",
     badge: "Validez comprobada",
+    color: "190 88% 58%",
   },
   {
     to: "/auditoria",
@@ -73,6 +80,7 @@ const MODULES = [
     detail:
       "Cruza las citas del PDF con su bibliografía, verifica que los estudios existan aunque estén en otro idioma y propone correcciones.",
     badge: "Detecta retractaciones",
+    color: "28 94% 62%",
   },
 ] as const;
 
@@ -194,17 +202,18 @@ export default function Index() {
             >
               <Link
                 to={module.to}
-                className="panel grain group flex h-full flex-col p-5 transition hover:border-primary/40"
+                style={{ "--module-color": module.color } as CSSProperties}
+                className="panel grain group flex h-full flex-col p-5 transition hover:border-[hsl(var(--module-color)/0.55)] hover:shadow-[0_18px_48px_-34px_hsl(var(--module-color))]"
               >
                 <div className="flex items-center gap-3">
-                  <span className="rounded-xl border border-primary/25 bg-primary/10 p-2.5">
-                    <module.icon className="h-[18px] w-[18px] text-primary" strokeWidth={1.9} />
+                  <span className="rounded-xl border border-[hsl(var(--module-color)/0.28)] bg-[hsl(var(--module-color)/0.12)] p-2.5 shadow-[0_8px_28px_-14px_hsl(var(--module-color))]">
+                    <module.icon className="h-[18px] w-[18px] text-[hsl(var(--module-color))]" strokeWidth={1.9} />
                   </span>
-                  <span className="label-xs">{module.badge}</span>
+                  <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[hsl(var(--module-color))]">{module.badge}</span>
                 </div>
                 <p className="mt-4 font-serif text-[19px] font-semibold tracking-tight">{module.title}</p>
                 <p className="mt-2 flex-1 text-[13px] leading-relaxed text-muted-foreground">{module.detail}</p>
-                <span className="mt-4 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-primary">
+                <span className="mt-4 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[hsl(var(--module-color))]">
                   Abrir
                   <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
                 </span>

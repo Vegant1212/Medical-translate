@@ -14,7 +14,7 @@ import {
   Video as VideoIcon,
   X,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
 import { Logo } from "@/components/Logo";
@@ -27,19 +27,32 @@ interface NavItem {
   label: string;
   hint: string;
   icon: typeof Languages;
+  color: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: "/traducir", label: "Traducir", hint: "Texto clínico bidireccional", icon: Languages },
-  { to: "/correccion", label: "Corrección", hint: "Ortografía y siglas · doble check", icon: ScanText },
-  { to: "/terminologia", label: "Terminología", hint: "Siglas y abreviaturas", icon: SpellCheck2 },
-  { to: "/documentos", label: "Documentos", hint: "PDF · Word · PowerPoint", icon: FileStack },
-  { to: "/historial", label: "Historial", hint: "Continuar proyectos locales", icon: HistoryIcon },
-  { to: "/video", label: "Vídeo", hint: "Subtítulos desde audio", icon: VideoIcon },
-  { to: "/citas", label: "Citas", hint: "APA · AMA · Vancouver", icon: BookMarked },
-  { to: "/auditoria", label: "Auditoría", hint: "Bibliografía de un PDF", icon: FileSearch },
-  { to: "/ajustes", label: "Ajustes", hint: "Idiomas y glosario", icon: Settings2 },
+  { to: "/traducir", label: "Traducir", hint: "Texto clínico bidireccional", icon: Languages, color: "164 66% 50%" },
+  { to: "/correccion", label: "Corrección", hint: "Ortografía y siglas · doble check", icon: ScanText, color: "205 95% 68%" },
+  { to: "/terminologia", label: "Terminología", hint: "Siglas y abreviaturas", icon: SpellCheck2, color: "266 76% 68%" },
+  { to: "/documentos", label: "Documentos", hint: "PDF · Word · PowerPoint", icon: FileStack, color: "40 90% 61%" },
+  { to: "/historial", label: "Historial", hint: "Continuar proyectos locales", icon: HistoryIcon, color: "190 88% 58%" },
+  { to: "/video", label: "Vídeo", hint: "Subtítulos desde audio", icon: VideoIcon, color: "14 88% 66%" },
+  { to: "/citas", label: "Citas", hint: "APA · AMA · Vancouver", icon: BookMarked, color: "190 88% 58%" },
+  { to: "/auditoria", label: "Auditoría", hint: "Bibliografía de un PDF", icon: FileSearch, color: "28 94% 62%" },
+  { to: "/ajustes", label: "Ajustes", hint: "Idiomas y glosario", icon: Settings2, color: "266 76% 68%" },
 ];
+
+const SECTION_THEMES: Record<string, { primary: string; foreground: string }> = {
+  "/traducir": { primary: "164 66% 50%", foreground: "168 70% 5%" },
+  "/correccion": { primary: "205 95% 68%", foreground: "205 70% 7%" },
+  "/terminologia": { primary: "266 76% 68%", foreground: "266 65% 8%" },
+  "/documentos": { primary: "40 90% 61%", foreground: "35 75% 7%" },
+  "/historial": { primary: "190 88% 58%", foreground: "190 75% 6%" },
+  "/video": { primary: "14 88% 66%", foreground: "14 70% 8%" },
+  "/citas": { primary: "190 88% 58%", foreground: "190 75% 6%" },
+  "/auditoria": { primary: "28 94% 62%", foreground: "28 75% 7%" },
+  "/ajustes": { primary: "266 76% 68%", foreground: "266 65% 8%" },
+};
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { configured, user, signOut } = useAuth();
@@ -63,11 +76,12 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             key={item.to}
             to={item.to}
             onClick={onNavigate}
+            style={{ "--nav-color": item.color } as CSSProperties}
             className={({ isActive }) =>
               cn(
                 "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors",
                 isActive
-                  ? "bg-primary/10 text-foreground"
+                  ? "bg-[hsl(var(--nav-color)/0.12)] text-foreground"
                   : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
               )
             }
@@ -77,14 +91,20 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 {isActive ? (
                   <motion.span
                     layoutId="nav-active"
-                    className="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-full bg-primary"
+                    className="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-full bg-[hsl(var(--nav-color))]"
                     transition={{ type: "spring", stiffness: 400, damping: 32 }}
                   />
                 ) : null}
-                <item.icon
-                  className={cn("h-[18px] w-[18px] shrink-0", isActive ? "text-primary" : "text-muted-foreground")}
-                  strokeWidth={1.8}
-                />
+                <span
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border"
+                  style={{
+                    color: `hsl(${item.color})`,
+                    borderColor: `hsl(${item.color} / 0.25)`,
+                    background: `hsl(${item.color} / ${isActive ? 0.17 : 0.08})`,
+                  }}
+                >
+                  <item.icon className="h-[17px] w-[17px]" strokeWidth={1.9} />
+                </span>
                 <span className="flex-1">
                   <span className="block text-[13.5px] font-medium leading-tight">{item.label}</span>
                   <span className="block text-[11px] leading-tight text-muted-foreground/80">{item.hint}</span>
@@ -131,9 +151,21 @@ interface AppShellProps {
 export function AppShell({ title, subtitle, actions, children }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
   const location = useLocation();
+  const sectionTheme = SECTION_THEMES[location.pathname] ?? SECTION_THEMES["/traducir"];
 
   return (
-    <div className="min-h-screen lg:pl-[248px]">
+    <div
+      className="min-h-screen lg:pl-[248px]"
+      style={
+        {
+          "--primary": sectionTheme.primary,
+          "--primary-foreground": sectionTheme.foreground,
+          "--ring": sectionTheme.primary,
+          "--sidebar-primary": sectionTheme.primary,
+          "--sidebar-primary-foreground": sectionTheme.foreground,
+        } as CSSProperties
+      }
+    >
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] border-r border-border/70 bg-sidebar/80 backdrop-blur-xl lg:block">
         <SidebarContent />
       </aside>
@@ -173,7 +205,7 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
         ) : null}
       </AnimatePresence>
 
-      <header className="sticky top-0 z-20 border-b border-border/70 bg-gradient-to-r from-background/90 via-background/75 to-[hsl(var(--violet)/0.08)] backdrop-blur-xl">
+      <header className="sticky top-0 z-20 border-b border-border/70 bg-gradient-to-r from-background/90 via-background/75 to-primary/10 backdrop-blur-xl">
         <div className="grid gap-3 px-4 py-4 sm:flex sm:items-start sm:px-6 lg:px-8">
           <div className="flex min-w-0 flex-1 items-start gap-3">
             <button
