@@ -1,5 +1,9 @@
 const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "").replace(/\/$/, "");
 const PROTECTED_TOKEN = /https?:\/\/[^\s)\]}]+|\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+|\d+(?:[.,]\d+)?/gi;
+const MAX_BATCH_SEGMENTS = 12;
+const MAX_BATCH_CHARS = 9_000;
+const MAX_BATCH_ATTEMPTS = 4;
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
 function letterCode(index: number): string {
   let value = index + 1;
@@ -29,9 +33,9 @@ function protectTokens(text: string): { text: string; restore: (translation: str
 }
 
 const wait = (milliseconds: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
-  const timeout = window.setTimeout(resolve, milliseconds);
+  const timeout = globalThis.setTimeout(resolve, milliseconds);
   signal?.addEventListener("abort", () => {
-    window.clearTimeout(timeout);
+    globalThis.clearTimeout(timeout);
     reject(new DOMException("La traducción fue cancelada.", "AbortError"));
   }, { once: true });
 });
@@ -47,16 +51,25 @@ async function translateBatch(input: {
     const protectedItem = protectTokens(item.text);
     return { id: item.id, text: protectedItem.text, restore: protectedItem.restore };
   });
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const response = await fetch(`${API_BASE_URL}/api/translate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: input.signal,
-      body: JSON.stringify({
-        ...input,
-        texts: protectedTexts.map(({ id, text }) => ({ id, text })),
-      }),
-    });
+  for (let attempt = 0; attempt < MAX_BATCH_ATTEMPTS; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/api/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: input.signal,
+        body: JSON.stringify({
+          sourceLanguage: input.sourceLanguage,
+          targetLanguage: input.targetLanguage,
+          targetVariant: input.targetVariant,
+          texts: protectedTexts.map(({ id, text }) => ({ id, text })),
+        }),
+      });
+    } catch (error) {
+      if (input.signal?.aborted || attempt === MAX_BATCH_ATTEMPTS - 1) throw error;
+      await wait(Math.min(12_000, 1_500 * 2 ** attempt), input.signal);
+      continue;
+    }
     const data = await response.json().catch(() => ({})) as {
       translations?: { id: string; text: string }[];
       error?: { message?: string; retryAfter?: number };
@@ -68,15 +81,15 @@ async function translateBatch(input: {
         text: restorers.get(item.id)?.(item.text) ?? item.text,
       }));
     }
-    if (response.status !== 429 || attempt === 2) {
+    if (!RETRYABLE_STATUS.has(response.status) || attempt === MAX_BATCH_ATTEMPTS - 1) {
       throw new Error(data.error?.message ?? "No se pudo completar la traducción rápida.");
     }
 
-    // Vercel may omit Retry-After. Back off progressively so the free-tier
-    // window can reopen instead of abandoning the entire document.
+    // Vercel may omit Retry-After for both rate limits and upstream 5xx
+    // failures. Back off progressively instead of abandoning the document.
     const retrySeconds = Number.isFinite(data.error?.retryAfter)
-      ? Math.max(5, data.error!.retryAfter!)
-      : 5 * (attempt + 1);
+      ? Math.max(2, data.error!.retryAfter!)
+      : Math.min(12, 2 * 2 ** attempt);
     await wait(retrySeconds * 1000, input.signal);
   }
   throw new Error("No se pudo completar la traducción rápida.");
@@ -94,7 +107,7 @@ export async function translateFastSegments(input: {
   let current: { id: string; text: string }[] = [];
   let chars = 0;
   for (const segment of input.segments) {
-    if (current.length >= 50 || (current.length > 0 && chars + segment.text.length > 40_000)) {
+    if (current.length >= MAX_BATCH_SEGMENTS || (current.length > 0 && chars + segment.text.length > MAX_BATCH_CHARS)) {
       batches.push(current);
       current = [];
       chars = 0;
@@ -105,20 +118,54 @@ export async function translateFastSegments(input: {
   if (current.length > 0) batches.push(current);
 
   const output: Record<string, string> = {};
-  for (const texts of batches) {
-      const translations = await translateBatch({
-        texts,
-        sourceLanguage: input.sourceLanguage,
-        targetLanguage: input.targetLanguage,
-        targetVariant: input.targetVariant,
-        signal: input.signal,
-      });
-      for (const item of translations) {
-        if (item.id && item.text?.trim()) output[item.id] = item.text;
+  const queue = [...batches];
+  while (queue.length > 0) {
+    const texts = queue.shift()!;
+    let translations: { id: string; text: string }[];
+    try {
+      translations = await translateBatch({
+          texts,
+          sourceLanguage: input.sourceLanguage,
+          targetLanguage: input.targetLanguage,
+          targetVariant: input.targetVariant,
+          signal: input.signal,
+        });
+    } catch (error) {
+      // A smaller payload is more likely to pass a congested free-tier route.
+      // Preserve progress by trying both halves before surfacing a final error.
+      if (texts.length > 1) {
+        const middle = Math.ceil(texts.length / 2);
+        queue.unshift(texts.slice(0, middle), texts.slice(middle));
+        continue;
       }
-      input.onProgress?.(Object.fromEntries(
-        translations.filter((item) => item.id && item.text?.trim()).map((item) => [item.id, item.text]),
-      ));
+      // One difficult row must not cancel the remaining document. Documents
+      // performs additional residual passes, so leave this id pending there.
+      console.warn("single translation segment deferred", texts[0]?.id, error);
+      continue;
+    }
+
+    const requestedIds = new Set(texts.map((item) => item.id));
+    const partial: Record<string, string> = {};
+    for (const item of translations) {
+      if (requestedIds.has(item.id) && item.text?.trim()) {
+        output[item.id] = item.text;
+        partial[item.id] = item.text;
+      }
+    }
+    if (Object.keys(partial).length > 0) input.onProgress?.(partial);
+
+    // Successful HTTP responses can still contain truncated JSON or omit an
+    // item. Requeue only missing rows, in smaller groups, until every id has a
+    // translation or the service returns a real terminal error.
+    const missing = texts.filter((item) => !partial[item.id]);
+    if (missing.length > 0) {
+      if (missing.length === texts.length && texts.length === 1) {
+        console.warn("single translation segment omitted", texts[0]?.id);
+        continue;
+      }
+      const middle = Math.max(1, Math.ceil(missing.length / 2));
+      queue.unshift(...(missing.length > 1 ? [missing.slice(0, middle), missing.slice(middle)] : [missing]).filter((batch) => batch.length > 0));
+    }
   }
   return output;
 }

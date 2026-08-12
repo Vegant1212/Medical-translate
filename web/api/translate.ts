@@ -87,6 +87,13 @@ export default async function handler(
     };
     if (!gatewayResponse.ok) {
       const retryAfter = gatewayResponse.headers.get("retry-after");
+      console.warn("fast translation upstream failed", {
+        status: gatewayResponse.status,
+        retryAfter,
+        message: payload.error?.message?.slice(0, 240),
+        segmentCount: texts.length,
+        characterCount: texts.reduce((sum, item) => sum + item.text.length, 0),
+      });
       send(response, gatewayResponse.status, {
         error: {
           message: payload.error?.message ?? "El motor rápido no está disponible.",
