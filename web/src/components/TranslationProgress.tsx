@@ -38,6 +38,8 @@ const DOC_STAGES: ProgressStage[] = [
   { id: "finish", label: "Finalizando traducción", hint: "Completando los últimos segmentos", icon: FileText },
 ];
 
+const STAGE_COLORS = ["var(--primary)", "var(--info)", "var(--violet)", "var(--coral)"] as const;
+
 export interface TranslationProgressProps {
   /** Elapsed milliseconds since the translation started. */
   startTime: number;
@@ -155,8 +157,12 @@ export function TranslationProgress({
         {[0, 1, 2].map((ring) => (
           <motion.div
             key={ring}
-            className="absolute rounded-full border border-primary/20"
-            style={{ width: 130 + ring * 36, height: 130 + ring * 36 }}
+            className="absolute rounded-full border"
+            style={{
+              width: 130 + ring * 36,
+              height: 130 + ring * 36,
+              borderColor: `hsl(${STAGE_COLORS[ring]} / 0.22)`,
+            }}
             animate={{ scale: [1, 1.3, 1], opacity: [0.5, 0, 0.5] }}
             transition={{
               duration: 2.4,
@@ -175,6 +181,14 @@ export function TranslationProgress({
           viewBox="0 0 160 160"
           style={{ transform: "rotate(-90deg)" }}
         >
+          <defs>
+            <linearGradient id="translation-progress-ring" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="hsl(var(--primary))" />
+              <stop offset="38%" stopColor="hsl(var(--info))" />
+              <stop offset="72%" stopColor="hsl(var(--violet))" />
+              <stop offset="100%" stopColor="hsl(var(--coral))" />
+            </linearGradient>
+          </defs>
           <circle
             cx="80"
             cy="80"
@@ -189,7 +203,7 @@ export function TranslationProgress({
             cy="80"
             r="70"
             fill="none"
-            stroke="hsl(var(--primary))"
+            stroke="url(#translation-progress-ring)"
             strokeWidth="3"
             strokeLinecap="round"
             strokeDasharray={2 * Math.PI * 70}
@@ -198,7 +212,7 @@ export function TranslationProgress({
             }}
             transition={{ duration: 0.5, ease: "easeOut" }}
             style={{
-              filter: "drop-shadow(0 0 6px hsl(var(--primary) / 0.5))",
+              filter: "drop-shadow(0 0 7px hsl(var(--info) / 0.45))",
             }}
           />
         </svg>
@@ -208,9 +222,9 @@ export function TranslationProgress({
           className="relative flex h-[120px] w-[120px] flex-col items-center justify-center rounded-full"
           style={{
             background:
-              "radial-gradient(circle at 30% 30%, hsl(var(--primary) / 0.25), hsl(var(--primary) / 0.05) 70%)",
-            border: "1px solid hsl(var(--primary) / 0.3)",
-            boxShadow: "0 0 40px -8px hsl(var(--primary) / 0.4), inset 0 0 20px -4px hsl(var(--primary) / 0.15)",
+              "radial-gradient(circle at 28% 22%, hsl(var(--info) / 0.22), transparent 44%), radial-gradient(circle at 76% 78%, hsl(var(--violet) / 0.18), transparent 48%), hsl(var(--primary) / 0.055)",
+            border: "1px solid hsl(var(--info) / 0.32)",
+            boxShadow: "0 0 42px -10px hsl(var(--violet) / 0.38), inset 0 0 22px -5px hsl(var(--primary) / 0.18)",
           }}
           animate={{ scale: [1, 1.04, 1] }}
           transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
@@ -219,7 +233,7 @@ export function TranslationProgress({
           {isDocMode ? (
             <motion.div
               key={displayPercent}
-              className="font-mono text-[28px] font-bold tabular-nums text-primary"
+              className="font-mono text-[30px] font-bold tabular-nums text-foreground"
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ type: "spring", stiffness: 300, damping: 20 }}
@@ -234,18 +248,6 @@ export function TranslationProgress({
             {isDocMode ? "segmentos" : "procesando"}
           </div>
 
-          {/* Orbiting dot */}
-          <motion.div
-            className="absolute h-2 w-2 rounded-full bg-primary"
-            style={{ top: "50%", left: "50%", marginLeft: "-4px", marginTop: "-4px" }}
-            animate={{ rotate: 360 }}
-            transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-          >
-            <div
-              className="absolute h-2 w-2 rounded-full bg-primary"
-              style={{ left: "58px", top: "0px" }}
-            />
-          </motion.div>
         </motion.div>
       </div>
 
@@ -275,9 +277,9 @@ export function TranslationProgress({
           className="absolute inset-y-0 left-0 rounded-full"
           style={{
             background:
-              "linear-gradient(90deg, hsl(var(--primary) / 0.4), hsl(var(--primary)), hsl(var(--primary) / 0.6))",
+              "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--info)), hsl(var(--violet)), hsl(var(--coral)))",
             backgroundSize: "200% 100%",
-            boxShadow: "0 0 12px -2px hsl(var(--primary) / 0.5)",
+            boxShadow: "0 0 14px -2px hsl(var(--info) / 0.48)",
           }}
           animate={{
             width: isDocMode ? `${Math.max(4, overallProgress * 100)}%` : "38%",
@@ -310,6 +312,7 @@ export function TranslationProgress({
           const isActive = index === currentStage;
           const isPending = index > currentStage;
           const Icon = stage.icon;
+          const stageColor = STAGE_COLORS[index] ?? "var(--primary)";
 
           return (
             <motion.div
@@ -327,14 +330,14 @@ export function TranslationProgress({
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors"
                 style={{
                   borderColor: isDone
-                    ? "hsl(var(--primary) / 0.3)"
+                    ? `hsl(${stageColor} / 0.32)`
                     : isActive
-                      ? "hsl(var(--primary) / 0.5)"
+                      ? `hsl(${stageColor} / 0.58)`
                       : "hsl(var(--border) / 0.5)",
                   background: isDone
-                    ? "hsl(var(--primary) / 0.08)"
+                    ? `hsl(${stageColor} / 0.1)`
                     : isActive
-                      ? "hsl(var(--primary) / 0.06)"
+                      ? `hsl(${stageColor} / 0.1)`
                       : "transparent",
                 }}
               >
@@ -346,11 +349,11 @@ export function TranslationProgress({
                       animate={{ scale: 1, rotate: 0 }}
                       transition={{ type: "spring", stiffness: 300, damping: 20 }}
                     >
-                      <Check className="h-4 w-4 text-primary" strokeWidth={2.5} />
+                      <Check className="h-4 w-4" style={{ color: `hsl(${stageColor})` }} strokeWidth={2.5} />
                     </motion.div>
                   ) : isActive ? (
                     <motion.div key="active">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      <Loader2 className="h-4 w-4 animate-spin" style={{ color: `hsl(${stageColor})` }} />
                     </motion.div>
                   ) : (
                     <Icon
@@ -369,7 +372,7 @@ export function TranslationProgress({
                     color: isDone
                       ? "hsl(var(--foreground) / 0.7)"
                       : isActive
-                        ? "hsl(var(--primary))"
+                        ? `hsl(${stageColor})`
                         : "hsl(var(--muted-foreground))",
                   }}
                 >
@@ -390,7 +393,7 @@ export function TranslationProgress({
                   <motion.div
                     className="h-full rounded-full"
                     style={{
-                      background: "linear-gradient(90deg, transparent, hsl(var(--primary)), transparent)",
+                      background: `linear-gradient(90deg, transparent, hsl(${stageColor}), transparent)`,
                       backgroundSize: "50% 100%",
                     }}
                     animate={{ backgroundPosition: ["-50% 0", "150% 0"] }}
