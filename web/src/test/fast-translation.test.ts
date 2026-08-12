@@ -8,6 +8,32 @@ afterEach(() => {
 });
 
 describe("translateFastSegments", () => {
+  it("translates complete documents with Chrome's local engine without calling the Gateway", async () => {
+    const fetchMock = vi.fn();
+    const destroy = vi.fn();
+    const translate = vi.fn(async (text: string) => `Local:${text}`);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("Translator", {
+      availability: vi.fn().mockResolvedValue("available"),
+      create: vi.fn().mockResolvedValue({ translate, destroy }),
+    });
+
+    const result = await translateFastSegments({
+      segments: [
+        { id: "a", text: "Dose 5 mg" },
+        { id: "b", text: "Blood pressure 120/80" },
+      ],
+      sourceLanguage: "en",
+      targetLanguage: "es",
+    });
+
+    expect(result.a).toContain("5");
+    expect(result.b).toContain("120/80");
+    expect(translate).toHaveBeenCalledTimes(2);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
   it("uses larger document batches to stay below the Gateway request-rate ceiling", async () => {
     const fetchMock = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as { texts: { id: string; text: string }[] };

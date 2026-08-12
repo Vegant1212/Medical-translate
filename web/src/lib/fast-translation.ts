@@ -8,6 +8,21 @@ const MAX_BATCH_SEGMENTS = 24;
 const MAX_BATCH_CHARS = 16_000;
 const MAX_BATCH_ATTEMPTS = 3;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const BUILT_IN_TRANSLATOR_LANGUAGES = new Set([
+  "ar", "bg", "bn", "cs", "da", "de", "el", "en", "es", "fi", "fr", "hi", "hr", "hu",
+  "id", "it", "iw", "ja", "kn", "ko", "lt", "mr", "nl", "no", "pl", "pt", "ro", "ru",
+  "sk", "sl", "sv", "ta", "te", "th", "tr", "uk", "vi", "zh", "zh-Hant",
+]);
+
+interface BuiltInTranslatorInstance {
+  translate: (text: string) => Promise<string>;
+  destroy?: () => void;
+}
+
+interface BuiltInTranslatorApi {
+  availability: (options: { sourceLanguage: string; targetLanguage: string }) => Promise<string>;
+  create: (options: { sourceLanguage: string; targetLanguage: string }) => Promise<BuiltInTranslatorInstance>;
+}
 
 class TranslationBatchError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -45,6 +60,38 @@ function protectTokens(text: string): { text: string; restore: (translation: str
       translation,
     ),
   };
+}
+
+function browserLanguageCode(value: string): string {
+  const normalized = value.trim();
+  if (/^zh-(?:tw|hk|hant)/i.test(normalized)) return "zh-Hant";
+  const base = normalized.split("-")[0]?.toLowerCase() ?? "";
+  return base === "he" ? "iw" : base;
+}
+
+async function createBuiltInTranslator(input: {
+  sourceLanguage: string | "auto";
+  targetLanguage: string;
+}): Promise<BuiltInTranslatorInstance | undefined> {
+  if (input.sourceLanguage === "auto") return undefined;
+  const sourceLanguage = browserLanguageCode(input.sourceLanguage);
+  const targetLanguage = browserLanguageCode(input.targetLanguage);
+  if (
+    sourceLanguage === targetLanguage
+    || !BUILT_IN_TRANSLATOR_LANGUAGES.has(sourceLanguage)
+    || !BUILT_IN_TRANSLATOR_LANGUAGES.has(targetLanguage)
+  ) return undefined;
+
+  const translatorApi = (globalThis as typeof globalThis & { Translator?: BuiltInTranslatorApi }).Translator;
+  if (!translatorApi) return undefined;
+  try {
+    const availability = await translatorApi.availability({ sourceLanguage, targetLanguage });
+    if (availability === "unavailable") return undefined;
+    return await translatorApi.create({ sourceLanguage, targetLanguage });
+  } catch (error) {
+    console.warn("built-in browser translator unavailable", error);
+    return undefined;
+  }
 }
 
 const wait = (milliseconds: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
@@ -124,10 +171,43 @@ export async function translateFastSegments(input: {
   signal?: AbortSignal;
   onProgress?: (translations: Record<string, string>) => void;
 }): Promise<Record<string, string>> {
+  const output: Record<string, string> = {};
+  let remainingSegments = input.segments;
+
+  // Chrome desktop ships an on-device translation engine. Prefer it because
+  // it has no per-document request quota, keeps medical text on the device,
+  // and lets the optional clinical review remain a separate AI step.
+  const localTranslator = await createBuiltInTranslator(input);
+  if (localTranslator) {
+    const deferred: { id: string; text: string }[] = [];
+    try {
+      for (const segment of input.segments) {
+        if (input.signal?.aborted) throw new DOMException("La traducción fue cancelada.", "AbortError");
+        const protectedItem = protectTokens(segment.text);
+        try {
+          const translated = protectedItem.restore(await localTranslator.translate(protectedItem.text));
+          if (translated.trim()) {
+            output[segment.id] = translated;
+            input.onProgress?.({ [segment.id]: translated });
+          } else {
+            deferred.push(segment);
+          }
+        } catch (error) {
+          if (input.signal?.aborted) throw error;
+          deferred.push(segment);
+        }
+      }
+    } finally {
+      localTranslator.destroy?.();
+    }
+    if (deferred.length === 0) return output;
+    remainingSegments = deferred;
+  }
+
   const batches: { id: string; text: string }[][] = [];
   let current: { id: string; text: string }[] = [];
   let chars = 0;
-  for (const segment of input.segments) {
+  for (const segment of remainingSegments) {
     if (current.length >= MAX_BATCH_SEGMENTS || (current.length > 0 && chars + segment.text.length > MAX_BATCH_CHARS)) {
       batches.push(current);
       current = [];
@@ -138,7 +218,6 @@ export async function translateFastSegments(input: {
   }
   if (current.length > 0) batches.push(current);
 
-  const output: Record<string, string> = {};
   const queue = [...batches];
   let consecutiveProviderFailures = 0;
   while (queue.length > 0) {
