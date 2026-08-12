@@ -155,7 +155,7 @@ export async function translateFastSegments(input: {
       if (isProviderUnavailable(error)) {
         consecutiveProviderFailures += 1;
         if (consecutiveProviderFailures >= 2) {
-          throw new Error("OpenAI no está disponible temporalmente. El avance quedó guardado; usa Reanudar cuando el servicio se restablezca.");
+          throw new Error("OpenAI no está disponible temporalmente. El avance quedó guardado; usa Completar pendientes cuando el servicio se restablezca.");
         }
         queue.push(texts);
         await wait(12_000, input.signal);
