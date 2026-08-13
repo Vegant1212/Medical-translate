@@ -20,7 +20,7 @@ import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
 import { TranslationProgress } from "@/components/TranslationProgress";
-import { LanguageBar, Panel, RegisterDomainControls, Segmented, Spinner } from "@/components/controls";
+import { LanguageBar, Panel, ProcessPercentage, RegisterDomainControls, Segmented, Spinner } from "@/components/controls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -345,6 +345,7 @@ export default function DocumentsPage() {
                   PDF · DOCX · PPTX — hasta 25 MB. El diseño original se conserva.
                 </p>
               </div>
+              {parse.isPending ? <ProcessPercentage label="Analizando estructura y contenido" /> : null}
               <div className="flex flex-wrap justify-center gap-2">
                 {(Object.keys(KIND_META) as DocKind[]).map((kind) => {
                   const item = KIND_META[kind];
