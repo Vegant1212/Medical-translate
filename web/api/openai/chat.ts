@@ -86,7 +86,8 @@ export default async function handler(request: IncomingMessage, response: Server
     });
     const data = (await upstream.json()) as OpenAIResponse;
     if (!upstream.ok) {
-      console.error("OpenAI request failed", upstream.status, data.error?.message);
+      // Do not log provider messages: authentication errors can echo a submitted secret.
+      console.error("OpenAI request failed", upstream.status);
       send(response, upstream.status === 429 ? 429 : 502, { error: { message: "No se pudo completar la traducción." } });
       return;
     }
