@@ -108,7 +108,11 @@ export async function extractAudioFromFile(
   // For video files, decode via an <audio> element and re-encode with MediaRecorder.
   const url = URL.createObjectURL(file);
   try {
-    const audioEl = new Audio();
+    // A <video> element is required here. Some browsers never emit
+    // loadedmetadata when a video container is assigned to an Audio element,
+    // even when the file has a valid audio track.
+    const audioEl = document.createElement("video");
+    audioEl.preload = "auto";
     audioEl.src = url;
     audioEl.crossOrigin = "anonymous";
     // Browsers block audible autoplay once the original file-picker gesture has
@@ -116,6 +120,7 @@ export async function extractAudioFromFile(
     // supplies the audio samples to the recorder without playing them aloud.
     audioEl.muted = true;
     audioEl.playsInline = true;
+    audioEl.load();
 
     await new Promise<void>((resolve, reject) => {
       audioEl.addEventListener("loadedmetadata", () => resolve(), { once: true });
@@ -369,10 +374,11 @@ export async function transcribeMedia(
   }
 
   const isVideo = file.type.startsWith("video/") || /\.(mp4|webm|mov|avi|mkv)$/i.test(file.name);
+  const directVideoLimit = 20 * 1024 * 1024;
 
   // Upload video files directly. Browser-based audio extraction requires
   // real-time media playback and can hang because of autoplay/codec policies.
-  if (isVideo) {
+  if (isVideo && file.size <= directVideoLimit) {
     onProgress?.("Subiendo video para transcripción…", { current: 0, total: file.size, unit: "bytes" });
     return transcribeWithScribe(file, signal, (loaded, total) => {
       onProgress?.("Subiendo video para transcripción…", {
