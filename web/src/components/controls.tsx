@@ -1,5 +1,5 @@
 import { ArrowLeftRight, Check, ChevronDown, Copy, Loader2 } from "lucide-react";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -251,11 +251,47 @@ export function Panel({
 }
 
 export function Spinner({ label }: { label?: string }) {
+  const percent = useEstimatedPercent();
   return (
     <span className="inline-flex items-center gap-2 text-[12.5px] text-muted-foreground">
       <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-      {label}
+      {label} <span className="font-mono tabular-nums text-primary">{percent}%</span>
     </span>
+  );
+}
+
+/** Visual progress for APIs that do not expose measurable server progress. */
+export function useEstimatedPercent(active = true): number {
+  const [percent, setPercent] = useState(1);
+  useEffect(() => {
+    if (!active) {
+      setPercent(1);
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setPercent((current) => {
+        if (current >= 94) return current;
+        const step = current < 45 ? 4 : current < 75 ? 2 : 1;
+        return Math.min(94, current + step);
+      });
+    }, 650);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return percent;
+}
+
+export function ProcessPercentage({ label }: { label?: string }) {
+  const percent = useEstimatedPercent();
+  return (
+    <div className="w-full max-w-sm" aria-live="polite">
+      <div className="mb-1.5 flex items-center justify-between text-[12px] text-muted-foreground">
+        <span>{label ?? "Procesando…"}</span>
+        <span className="font-mono tabular-nums text-primary">{percent}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+        <div className="h-full rounded-full bg-gradient-to-r from-primary via-violet to-coral transition-[width] duration-500" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
   );
 }
 
