@@ -20,6 +20,7 @@ import { Logo } from "@/components/Logo";
 import { MEDICAL_MODEL } from "@/lib/toolkit";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/auth";
+import { useInterfaceLanguage, type InterfaceLanguage } from "@/context/interface-language";
 
 interface NavItem {
   to: string;
@@ -40,6 +41,74 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/ajustes", label: "Ajustes", hint: "Idiomas y glosario", icon: Settings2, color: "var(--violet)" },
 ];
 
+const UI_COPY: Record<InterfaceLanguage, {
+  clinical: string;
+  engine: string;
+  signOut: string;
+  openMenu: string;
+  closeMenu: string;
+  nav: Record<string, { label: string; hint: string }>;
+  pages: Record<string, { title: string; subtitle: string }>;
+}> = {
+  es: {
+    clinical: "Traducción clínica", engine: "Motor", signOut: "Cerrar sesión", openMenu: "Abrir menú", closeMenu: "Cerrar menú",
+    nav: {
+      "/traducir": { label: "Traducir", hint: "Texto clínico bidireccional" }, "/correccion": { label: "Corrección", hint: "Ortografía y siglas · doble check" },
+      "/terminologia": { label: "Terminología", hint: "Siglas y abreviaturas" }, "/documentos": { label: "Documentos", hint: "PDF · Word · PowerPoint" },
+      "/video": { label: "Vídeo", hint: "Subtítulos desde audio" }, "/citas": { label: "Citas", hint: "APA · AMA · Vancouver" },
+      "/auditoria": { label: "Auditoría", hint: "Bibliografía de un PDF" }, "/ajustes": { label: "Ajustes", hint: "Idiomas y glosario" },
+    },
+    pages: {
+      "/traducir": { title: "Traducción clínica", subtitle: "Bidireccional, por país y por nivel de complejidad — de lenguaje de paciente a artículo indexado." },
+      "/correccion": { title: "Doble corrección", subtitle: "Ortografía, tipografía médica y verificación de cada abreviatura, sigla y acrónimo con cotejo en fuentes." },
+      "/terminologia": { title: "Terminología y siglas", subtitle: "Descifra siglas, abreviaturas, contracciones y símbolos médicos, con su uso por país y su cotejo científico." },
+      "/documentos": { title: "Documentos", subtitle: "Traduce PDF, Word y PowerPoint sobre el propio documento, edítalos y descárgalos con el formato original." },
+      "/video": { title: "Vídeo y subtítulos", subtitle: "Sube un vídeo o audio médico: MedLingua transcribe el audio, genera subtítulos y los traduce al idioma que elijas." },
+      "/citas": { title: "Citas bibliográficas", subtitle: "Sube un artículo o pega un DOI/PMID y genera la cita con validación en Crossref y PubMed." },
+      "/auditoria": { title: "Auditoría bibliográfica", subtitle: "Comprueba que las citas coincidan con la bibliografía y que los estudios citados existan." },
+      "/ajustes": { title: "Ajustes", subtitle: "Activa idiomas adicionales, elige variantes por país y fija tu glosario institucional." },
+    },
+  },
+  en: {
+    clinical: "Clinical translation", engine: "Engine", signOut: "Sign out", openMenu: "Open menu", closeMenu: "Close menu",
+    nav: {
+      "/traducir": { label: "Translate", hint: "Bidirectional clinical text" }, "/correccion": { label: "Proofreading", hint: "Spelling and abbreviations · double check" },
+      "/terminologia": { label: "Terminology", hint: "Acronyms and abbreviations" }, "/documentos": { label: "Documents", hint: "PDF · Word · PowerPoint" },
+      "/video": { label: "Video", hint: "Subtitles from audio" }, "/citas": { label: "Citations", hint: "APA · AMA · Vancouver" },
+      "/auditoria": { label: "Audit", hint: "PDF bibliography" }, "/ajustes": { label: "Settings", hint: "Languages and glossary" },
+    },
+    pages: {
+      "/traducir": { title: "Clinical translation", subtitle: "Bidirectional, localized by country and complexity level — from patient language to indexed articles." },
+      "/correccion": { title: "Double proofreading", subtitle: "Medical spelling and typography, plus source-based verification of every abbreviation and acronym." },
+      "/terminologia": { title: "Terminology and acronyms", subtitle: "Decode medical acronyms, abbreviations, contractions and symbols, including regional use and scientific verification." },
+      "/documentos": { title: "Documents", subtitle: "Translate PDF, Word and PowerPoint files, edit them and download them in their original format." },
+      "/video": { title: "Video and subtitles", subtitle: "Upload medical video or audio: MedLingua transcribes it, creates subtitles and translates them." },
+      "/citas": { title: "Bibliographic citations", subtitle: "Upload an article or paste a DOI/PMID and generate a citation validated with Crossref and PubMed." },
+      "/auditoria": { title: "Bibliographic audit", subtitle: "Check that in-text citations match the bibliography and that the cited studies exist." },
+      "/ajustes": { title: "Settings", subtitle: "Enable additional languages, choose country variants and manage your institutional glossary." },
+    },
+  },
+  pt: {
+    clinical: "Tradução clínica", engine: "Motor", signOut: "Sair", openMenu: "Abrir menu", closeMenu: "Fechar menu",
+    nav: {
+      "/traducir": { label: "Traduzir", hint: "Texto clínico bidirecional" }, "/correccion": { label: "Revisão", hint: "Ortografia e siglas · dupla verificação" },
+      "/terminologia": { label: "Terminologia", hint: "Siglas e abreviações" }, "/documentos": { label: "Documentos", hint: "PDF · Word · PowerPoint" },
+      "/video": { label: "Vídeo", hint: "Legendas a partir de áudio" }, "/citas": { label: "Citações", hint: "APA · AMA · Vancouver" },
+      "/auditoria": { label: "Auditoria", hint: "Bibliografia de um PDF" }, "/ajustes": { label: "Configurações", hint: "Idiomas e glossário" },
+    },
+    pages: {
+      "/traducir": { title: "Tradução clínica", subtitle: "Bidirecional, por país e nível de complexidade — da linguagem do paciente ao artigo indexado." },
+      "/correccion": { title: "Dupla revisão", subtitle: "Ortografia e tipografia médica, com verificação em fontes de cada abreviação, sigla e acrônimo." },
+      "/terminologia": { title: "Terminologia e siglas", subtitle: "Decifre siglas, abreviações, contrações e símbolos médicos, com uso regional e verificação científica." },
+      "/documentos": { title: "Documentos", subtitle: "Traduza PDF, Word e PowerPoint, edite-os e baixe-os no formato original." },
+      "/video": { title: "Vídeo e legendas", subtitle: "Envie vídeo ou áudio médico: a MedLingua transcreve, cria legendas e as traduz." },
+      "/citas": { title: "Citações bibliográficas", subtitle: "Envie um artigo ou cole um DOI/PMID e gere a citação validada no Crossref e PubMed." },
+      "/auditoria": { title: "Auditoria bibliográfica", subtitle: "Verifique se as citações correspondem à bibliografia e se os estudos citados existem." },
+      "/ajustes": { title: "Configurações", subtitle: "Ative idiomas adicionais, escolha variantes por país e gerencie o glossário institucional." },
+    },
+  },
+};
+
 const SECTION_THEMES: Record<string, { primary: string; foreground: string }> = {
   "/traducir": { primary: "164 66% 50%", foreground: "168 70% 5%" },
   "/correccion": { primary: "205 95% 68%", foreground: "205 70% 7%" },
@@ -53,6 +122,8 @@ const SECTION_THEMES: Record<string, { primary: string; foreground: string }> = 
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { user, signOut } = useAuth();
+  const { language } = useInterfaceLanguage();
+  const copy = UI_COPY[language];
   return (
     <div className="flex h-full flex-col">
       <NavLink to="/" onClick={onNavigate} className="group flex items-center gap-3 px-5 py-6">
@@ -62,12 +133,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
         <div className="leading-tight">
           <p className="font-serif text-[17px] font-semibold tracking-tight text-foreground">MedLingua</p>
-          <p className="label-xs">Traducción clínica</p>
+          <p className="label-xs">{copy.clinical}</p>
         </div>
       </NavLink>
 
       <nav className="flex-1 space-y-1 px-3">
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.map((item) => {
+          const translated = copy.nav[item.to] ?? item;
+          return (
           <NavLink
             key={item.to}
             to={item.to}
@@ -102,18 +175,18 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   <item.icon className="h-[17px] w-[17px]" strokeWidth={1.9} />
                 </span>
                 <span className="flex-1">
-                  <span className="block text-[13.5px] font-medium leading-tight">{item.label}</span>
-                  <span className="block text-[11px] leading-tight text-muted-foreground/80">{item.hint}</span>
+                  <span className="block text-[13.5px] font-medium leading-tight">{translated.label}</span>
+                  <span className="block text-[11px] leading-tight text-muted-foreground/80">{translated.hint}</span>
                 </span>
               </>
             )}
           </NavLink>
-        ))}
+        )})}
       </nav>
 
       <div className="m-3 rounded-xl border border-border/70 bg-elevated/50 p-3">
         <p className="flex items-center gap-1.5 label-xs">
-          <Sparkles className="h-3 w-3 text-primary" /> Motor
+          <Sparkles className="h-3 w-3 text-primary" /> {copy.engine}
         </p>
         <p className="mt-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
           {MEDICAL_MODEL}
@@ -127,7 +200,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             onClick={() => void signOut()}
             className="mt-2 inline-flex items-center gap-1.5 text-[11.5px] font-medium text-coral transition hover:brightness-125"
           >
-            <LogOut className="h-3.5 w-3.5" /> Cerrar sesión
+            <LogOut className="h-3.5 w-3.5" /> {copy.signOut}
           </button>
         </div>
       </div>
@@ -145,6 +218,9 @@ interface AppShellProps {
 export function AppShell({ title, subtitle, actions, children }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
   const location = useLocation();
+  const { language, setLanguage } = useInterfaceLanguage();
+  const copy = UI_COPY[language];
+  const localizedPage = copy.pages[location.pathname];
   const sectionTheme = SECTION_THEMES[location.pathname] ?? SECTION_THEMES["/traducir"];
 
   return (
@@ -174,7 +250,7 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
           >
             <button
               type="button"
-              aria-label="Cerrar menú"
+              aria-label={copy.closeMenu}
               className="absolute inset-0 bg-background/80 backdrop-blur-sm"
               onClick={() => setMenuOpen(false)}
             />
@@ -189,7 +265,7 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
                 type="button"
                 onClick={() => setMenuOpen(false)}
                 className="absolute right-3 top-6 rounded-lg p-1.5 text-muted-foreground hover:bg-secondary"
-                aria-label="Cerrar"
+                aria-label={copy.closeMenu}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -205,13 +281,20 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
             type="button"
             onClick={() => setMenuOpen(true)}
             className="mt-0.5 rounded-lg border border-border p-2 text-muted-foreground transition hover:text-foreground lg:hidden"
-            aria-label="Abrir menú"
+            aria-label={copy.openMenu}
           >
             <Menu className="h-4 w-4" />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate bg-gradient-to-r from-foreground via-foreground to-info bg-clip-text font-serif text-xl font-semibold tracking-tight text-transparent sm:text-[26px]">{title}</h1>
-            <p className="mt-0.5 text-[13px] leading-snug text-muted-foreground">{subtitle}</p>
+            <h1 className="truncate bg-gradient-to-r from-foreground via-foreground to-info bg-clip-text font-serif text-xl font-semibold tracking-tight text-transparent sm:text-[26px]">{localizedPage?.title ?? title}</h1>
+            <p className="mt-0.5 text-[13px] leading-snug text-muted-foreground">{localizedPage?.subtitle ?? subtitle}</p>
+          </div>
+          <div className="flex shrink-0 items-center rounded-lg border border-border/70 bg-elevated/50 p-0.5" aria-label="Interface language">
+            {(["es", "en", "pt"] as InterfaceLanguage[]).map((option) => (
+              <button key={option} type="button" onClick={() => setLanguage(option)} className={cn("rounded-md px-2 py-1 text-[10.5px] font-semibold uppercase transition", language === option ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground")} aria-pressed={language === option}>
+                {option}
+              </button>
+            ))}
           </div>
           {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
         </div>
