@@ -16,7 +16,9 @@ import { Link } from "react-router-dom";
 import type { CSSProperties } from "react";
 
 import { Logo } from "@/components/Logo";
+import { useInterfaceLanguage, type InterfaceLanguage } from "@/context/interface-language";
 import { CATALOG, CORE_LANGUAGE_CODES } from "@/lib/languages";
+import { cn } from "@/lib/utils";
 
 const MODULES = [
   {
@@ -85,6 +87,7 @@ const MODULES = [
 ] as const;
 
 export default function Index() {
+  const { language, setLanguage } = useInterfaceLanguage();
   const coreLanguages = CATALOG.filter((language) => CORE_LANGUAGE_CODES.includes(language.code));
   const extraCount = CATALOG.length - coreLanguages.length;
 
@@ -102,13 +105,36 @@ export default function Index() {
             <p className="label-xs">Traducción y verificación médica</p>
           </div>
         </div>
-        <Link
-          to="/traducir"
-          className="group inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3.5 py-2 text-[13px] font-medium text-primary transition hover:bg-primary/20"
-        >
-          Abrir el traductor
-          <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
-        </Link>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div
+            className="flex items-center rounded-lg border border-border/70 bg-elevated/50 p-0.5"
+            aria-label="Idioma de la interfaz"
+          >
+            {(["es", "en", "pt"] as InterfaceLanguage[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setLanguage(option)}
+                className={cn(
+                  "rounded-md px-2 py-1 text-[10.5px] font-semibold uppercase transition",
+                  language === option
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                aria-pressed={language === option}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+          <Link
+            to="/traducir"
+            className="group inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3.5 py-2 text-[13px] font-medium text-primary transition hover:bg-primary/20"
+          >
+            <span className="hidden sm:inline">Abrir el traductor</span>
+            <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+          </Link>
+        </div>
       </header>
 
       <main className="relative z-10 mx-auto max-w-[1200px] px-5 pb-20 sm:px-8">
