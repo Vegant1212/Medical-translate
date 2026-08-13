@@ -131,7 +131,10 @@ export default function VideoPage() {
           segments: transcript.segments,
           targetLanguage: settings.targetLanguage,
           targetVariant: settings.variants[settings.targetLanguage],
-          sourceLanguage: settings.sourceLanguage === "auto" ? transcript.language : settings.sourceLanguage,
+          sourceLanguage:
+            settings.sourceLanguage === "auto" && transcript.language !== "unknown"
+              ? transcript.language
+              : settings.sourceLanguage,
           register: settings.register,
           domain: settings.domain,
           glossary: settings.glossaryPairs,
@@ -382,6 +385,35 @@ export default function VideoPage() {
               <div className="mt-4 space-y-3">
                 <LanguageBar />
                 <RegisterDomainControls />
+              </div>
+
+              <div className="mt-4 flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">
+                    {settings.sourceLanguage === "auto"
+                      ? transcript.language !== "unknown"
+                        ? `Idioma detectado: ${languageLabel(transcript.language)}`
+                        : "El idioma se detectará automáticamente al traducir"
+                      : `Idioma de origen: ${languageLabel(settings.sourceLanguage)}`}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Traduce todos los segmentos al {languageLabel(settings.targetLanguage)}.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => translate.mutate()}
+                  disabled={translate.isPending || subtitles.length === 0 || translatedCount === subtitles.length}
+                  className="gap-2 rounded-xl bg-primary text-primary-foreground shadow-glow sm:min-w-52"
+                >
+                  {translate.isPending ? (
+                    <Spinner label="Traduciendo…" />
+                  ) : translatedCount === subtitles.length && subtitles.length > 0 ? (
+                    <><CheckCircle2 className="h-4 w-4" /> Traducción terminada</>
+                  ) : (
+                    <><Languages className="h-4 w-4" /> Traducir subtítulos</>
+                  )}
+                </Button>
               </div>
 
               {translate.isPending || progress.total > 0 ? (
