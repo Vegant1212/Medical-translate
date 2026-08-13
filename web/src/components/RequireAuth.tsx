@@ -5,7 +5,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/auth";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { loading, user } = useAuth();
+  const { configured, loading, user } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -16,6 +16,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     );
   }
 
+  if (!configured && import.meta.env.DEV) return children;
   if (!user) return <Navigate to="/acceso" replace state={{ from: location.pathname }} />;
   return children;
 }

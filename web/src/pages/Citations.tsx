@@ -56,27 +56,6 @@ export default function CitationsPage() {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleUploadedFile = useCallback(
-    async (file: File): Promise<void> => {
-      const name = file.name.toLowerCase();
-      const isSupported =
-        name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".pptx");
-      if (!isSupported) {
-        toast.error("Sube un archivo .pdf, .docx o .pptx.");
-        return;
-      }
-      if (file.size > 25 * 1024 * 1024) {
-        toast.error("El archivo supera los 25 MB.");
-        return;
-      }
-      setUploadedFileName(file.name);
-      setResult(undefined);
-      setRaw("");
-      resolveFromFile.mutate(file);
-    },
-    [],
-  );
-
   const resolveFromFile = useMutation({
     mutationFn: (file: File) => resolveAndVerifyFromFile({ file }),
     onSuccess: (data) => {
@@ -97,6 +76,27 @@ export default function CitationsPage() {
       );
     },
   });
+
+  const handleUploadedFile = useCallback(
+    async (file: File): Promise<void> => {
+      const name = file.name.toLowerCase();
+      const isSupported =
+        name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".pptx");
+      if (!isSupported) {
+        toast.error("Sube un archivo .pdf, .docx o .pptx.");
+        return;
+      }
+      if (file.size > 25 * 1024 * 1024) {
+        toast.error("El archivo supera los 25 MB.");
+        return;
+      }
+      setUploadedFileName(file.name);
+      setResult(undefined);
+      setRaw("");
+      resolveFromFile.mutate(file);
+    },
+    [resolveFromFile],
+  );
 
   const resolve = useMutation({
     mutationFn: () => resolveAndVerify({ raw: raw.trim() }),

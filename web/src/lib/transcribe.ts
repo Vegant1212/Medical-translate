@@ -10,7 +10,7 @@ import { DOMAINS, REGISTERS, localeDescriptor, type MedicalDomain, type Register
 const TOOLKIT_URL: string =
   ((import.meta.env.EXPO_PUBLIC_TOOLKIT_URL as string | undefined) ?? "https://toolkit.rork.com").replace(/\/$/, "");
 
-export const TRANSCRIPTION_MODEL = "xai/grok-stt" as const;
+export const TRANSCRIPTION_MODEL = "openai/gpt-4o-mini-transcribe" as const;
 export const TRANSCRIPTION_FALLBACK = "openai/gpt-4o-mini-transcribe" as const;
 
 /** Accepted video/audio extensions for the drop zone. */

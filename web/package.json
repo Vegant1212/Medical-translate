@@ -8,8 +8,10 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
+    "playwright:install": "playwright install chromium",
     "preview": "vite preview",
-    "test": "vitest run && vitest run --config vitest.browser.config.ts",
+    "test": "bun run test:unit && bun run test:browser:run",
+    "test:unit": "vitest run",
     "test:browser": "vitest --config vitest.browser.config.ts",
     "test:browser:run": "vitest run --config vitest.browser.config.ts",
     "test:watch": "vitest"

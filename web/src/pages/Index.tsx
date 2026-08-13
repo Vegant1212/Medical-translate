@@ -22,11 +22,11 @@ const MODULES = [
   {
     to: "/traducir",
     icon: Languages,
-    title: "Traducción clínica",
+    title: "Traducción médica especializada",
     detail:
       "Bidireccional entre español, inglés, portugués y francés, con variante por país y cuatro niveles: de lenguaje de paciente a artículo indexado.",
     badge: "Glosario automático",
-    color: "var(--primary)",
+    color: "164 66% 50%",
   },
   {
     to: "/correccion",
@@ -35,7 +35,7 @@ const MODULES = [
     detail:
       "Revisa ortografía, tipografía médica y verifica cada abreviatura, sigla y acrónimo contra su uso correcto en contexto — con alerta ISMP de siglas peligrosas.",
     badge: "Doble check",
-    color: "var(--info)",
+    color: "205 95% 68%",
   },
   {
     to: "/terminologia",
@@ -44,7 +44,7 @@ const MODULES = [
     detail:
       "Todas las lecturas posibles ordenadas por probabilidad, uso por país, códigos normalizados y alerta de abreviaturas peligrosas.",
     badge: "Cotejo científico",
-    color: "var(--violet)",
+    color: "266 76% 68%",
   },
   {
     to: "/documentos",
@@ -53,7 +53,7 @@ const MODULES = [
     detail:
       "PDF, Word y PowerPoint traducidos sobre el propio archivo: se conserva el diseño, se editan segmento a segmento y se descargan.",
     badge: "Formato intacto",
-    color: "var(--warn)",
+    color: "40 90% 61%",
   },
   {
     to: "/video",
@@ -62,7 +62,7 @@ const MODULES = [
     detail:
       "Sube un vídeo o audio médico: se transcribe el audio, se generan subtítulos con timestamps y se traducen al idioma que elijas.",
     badge: "SRT · VTT · Bilingüe",
-    color: "var(--coral)",
+    color: "14 88% 66%",
   },
   {
     to: "/citas",
@@ -71,7 +71,7 @@ const MODULES = [
     detail:
       "APA 7.ª, AMA 11.ª y Vancouver generadas desde un DOI, un PMID o texto libre, con validación en Crossref y PubMed.",
     badge: "Validez comprobada",
-    color: "var(--info)",
+    color: "190 88% 58%",
   },
   {
     to: "/auditoria",
@@ -80,7 +80,7 @@ const MODULES = [
     detail:
       "Cruza las citas del PDF con su bibliografía, verifica que los estudios existan aunque estén en otro idioma y propone correcciones.",
     badge: "Detecta retractaciones",
-    color: "var(--warn)",
+    color: "28 94% 62%",
   },
 ] as const;
 
@@ -92,7 +92,6 @@ export default function Index() {
     <div className="relative min-h-screen overflow-hidden">
       <div className="pointer-events-none absolute -left-40 -top-52 h-[560px] w-[560px] animate-drift rounded-full bg-primary/12 blur-[130px]" />
       <div className="pointer-events-none absolute -right-40 top-20 h-[520px] w-[520px] animate-drift rounded-full bg-info/10 blur-[130px]" />
-      <div className="pointer-events-none absolute bottom-0 left-1/3 h-[460px] w-[460px] animate-drift rounded-full bg-violet/8 blur-[130px]" />
 
       <header className="relative z-10 mx-auto flex max-w-[1200px] items-center justify-between px-5 py-6 sm:px-8">
         <div className="flex items-center gap-3">
@@ -204,10 +203,10 @@ export default function Index() {
               <Link
                 to={module.to}
                 style={{ "--module-color": module.color } as CSSProperties}
-                className="panel grain group flex h-full flex-col p-5 transition hover:border-[hsl(var(--module-color)/0.5)]"
+                className="panel grain group flex h-full flex-col p-5 transition hover:border-[hsl(var(--module-color)/0.55)] hover:shadow-[0_18px_48px_-34px_hsl(var(--module-color))]"
               >
                 <div className="flex items-center gap-3">
-                  <span className="rounded-xl border border-[hsl(var(--module-color)/0.28)] bg-[hsl(var(--module-color)/0.11)] p-2.5 shadow-[0_8px_28px_-14px_hsl(var(--module-color))]">
+                  <span className="rounded-xl border border-[hsl(var(--module-color)/0.28)] bg-[hsl(var(--module-color)/0.12)] p-2.5 shadow-[0_8px_28px_-14px_hsl(var(--module-color))]">
                     <module.icon className="h-[18px] w-[18px] text-[hsl(var(--module-color))]" strokeWidth={1.9} />
                   </span>
                   <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[hsl(var(--module-color))]">{module.badge}</span>

@@ -1,14 +1,21 @@
-/** Cliente del proxy privado de IA. La clave de OpenAI nunca llega al navegador. */
+/**
+ * Thin client for the Rork Toolkit proxy (AI chat completions + Exa web search).
+ * Browser builds get delegated auth injected by the runtime, so no key is sent here.
+ */
 
-import { supabase } from "@/lib/supabase";
+const LEGACY_TOOLKIT_URL = (import.meta.env.EXPO_PUBLIC_TOOLKIT_URL as string | undefined)?.replace(/\/$/, "");
+const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "").replace(/\/$/, "");
 
-const TOOLKIT_URL: string =
-  ((import.meta.env.EXPO_PUBLIC_TOOLKIT_URL as string | undefined) ?? "https://toolkit.rork.com").replace(/\/$/, "");
+const CHAT_URL = LEGACY_TOOLKIT_URL
+  ? `${LEGACY_TOOLKIT_URL}/v2/vercel/v1/chat/completions`
+  : `${API_BASE_URL}/api/chat`;
 
-const OPENAI_CHAT_URL = "/api/openai/chat";
+const TOOLKIT_URL = LEGACY_TOOLKIT_URL ?? "https://toolkit.rork.com";
 
 /** Model used for every medical language task. */
-export const MEDICAL_MODEL = "openai/local-secure-proxy" as const;
+export const MEDICAL_MODEL = "openai/gpt-5.4-mini" as const;
+export const FAST_TRANSLATION_MODEL = "openai/gpt-5.4-nano" as const;
+export const CLINICAL_REVIEW_MODEL = "openai/gpt-5.4-mini" as const;
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -20,6 +27,8 @@ export interface ChatOptions {
   maxTokens?: number;
   model?: string;
   signal?: AbortSignal;
+  /** Network attempts before returning control to the caller. */
+  attempts?: number;
 }
 
 interface ChatCompletionResponse {
@@ -27,44 +36,90 @@ interface ChatCompletionResponse {
   error?: { message?: string };
 }
 
+function gatewayErrorMessage(status: number): string {
+  if (status === 401 || status === 403) {
+    return "La conexión con tu cuenta de OpenAI necesita revisión en Vercel.";
+  }
+  if (status === 429) {
+    return "OpenAI está temporalmente saturado. Conservamos tu trabajo; espera unos segundos e inténtalo de nuevo.";
+  }
+  if (status >= 500) {
+    return "OpenAI no está disponible temporalmente. Conservamos tu trabajo; espera unos segundos e inténtalo de nuevo.";
+  }
+  return "OpenAI no pudo completar la petición. Inténtalo nuevamente.";
+}
+
+const CHAT_TIMEOUT_MS = 35_000;
+
+function requestSignal(parent?: AbortSignal): { signal: AbortSignal; cleanup: () => void; timedOut: () => boolean } {
+  const controller = new AbortController();
+  let timeoutReached = false;
+  const abortFromParent = () => controller.abort(parent?.reason);
+  if (parent?.aborted) abortFromParent();
+  else parent?.addEventListener("abort", abortFromParent, { once: true });
+  const timeout = globalThis.setTimeout(() => {
+    timeoutReached = true;
+    controller.abort(new DOMException("La petición tardó demasiado", "TimeoutError"));
+  }, CHAT_TIMEOUT_MS);
+  return {
+    signal: controller.signal,
+    timedOut: () => timeoutReached,
+    cleanup: () => {
+      globalThis.clearTimeout(timeout);
+      parent?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
 /** Sends a chat completion request through the proxy and returns the raw text. */
 export async function chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  if (!sessionData.session?.access_token) {
-    throw new Error("Tu sesión venció. Inicia sesión de nuevo para continuar.");
-  }
+  const maxAttempts = Math.max(1, Math.min(options.attempts ?? 3, 3));
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const attemptSignal = requestSignal(options.signal);
+    let response: Response;
+    try {
+      response = await fetch(CHAT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: attemptSignal.signal,
+        body: JSON.stringify({
+          model: options.model ?? MEDICAL_MODEL,
+          messages,
+          temperature: options.temperature ?? 0.2,
+          max_tokens: options.maxTokens ?? 8000,
+        }),
+      });
+    } catch (error) {
+      const timedOut = attemptSignal.timedOut();
+      attemptSignal.cleanup();
+      if (options.signal?.aborted) throw error;
+      if (timedOut && attempt < maxAttempts - 1) {
+        console.warn(`toolkit chat timed out (attempt ${attempt + 1}/${maxAttempts}), retrying…`);
+        continue;
+      }
+      throw new Error(timedOut
+        ? "El servicio de IA tardó demasiado en responder. Inténtalo nuevamente."
+        : "No se pudo conectar con el servicio de IA.");
+    }
+    attemptSignal.cleanup();
 
-  const response = await fetch(OPENAI_CHAT_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${sessionData.session.access_token}`,
-      "Content-Type": "application/json",
-    },
-    signal: options.signal,
-    body: JSON.stringify({
-      model: options.model ?? MEDICAL_MODEL,
-      messages,
-      temperature: options.temperature ?? 0.2,
-      max_tokens: options.maxTokens ?? 8000,
-    }),
-  });
+    if (response.ok) {
+      const data = (await response.json()) as ChatCompletionResponse;
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) throw new Error("La IA devolvió una respuesta vacía.");
+      return content;
+    }
 
-  if (!response.ok) {
+    const retryable = response.status === 429 || response.status >= 500;
     const detail = await response.text().catch(() => "");
     console.error("toolkit chat failed", response.status, detail.slice(0, 400));
-    throw new Error(
-      response.status === 429
-        ? "El servicio de IA está saturado. Espera unos segundos e inténtalo de nuevo."
-        : "No se pudo completar la petición de IA. Revisa tu conexión e inténtalo de nuevo.",
-    );
+    if (retryable && attempt < maxAttempts - 1) {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 900 * (attempt + 1)));
+      continue;
+    }
+    throw new Error(gatewayErrorMessage(response.status));
   }
-
-  const data = (await response.json()) as ChatCompletionResponse;
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error("La IA devolvió una respuesta vacía.");
-  }
-  return content;
+  throw new Error("No se pudo completar la petición de IA después de varios intentos.");
 }
 
 /**
@@ -162,9 +217,7 @@ export function parseJson<T>(raw: string): T {
 
   // Strategy 1: Use proper bracket-matching to find the first complete JSON value.
   for (const candidate of candidates) {
-    const arrayStart = candidate.indexOf("[");
-    const objectStart = candidate.indexOf("{");
-    const start = arrayStart < 0 ? objectStart : objectStart < 0 ? arrayStart : Math.min(arrayStart, objectStart);
+    const start = candidate.search(/[[{]/);
     if (start < 0) continue;
     const end = findMatchingBracket(candidate, start);
     if (end > start) {
@@ -210,7 +263,8 @@ export function parseJson<T>(raw: string): T {
     }
   }
 
-  console.error("parseJson: unparseable model output", raw.slice(0, 300));
+  // Do not log model output: it can contain sensitive medical information.
+  console.error("parseJson: unparseable model output");
   throw new Error("La IA devolvió un formato inesperado. Inténtalo de nuevo.");
 }
 

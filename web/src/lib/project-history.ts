@@ -1,139 +1,177 @@
-import type { DocKind, ParsedDocument } from "@/lib/documents";
-import { supabase } from "@/lib/supabase";
+import type { ParsedDocument } from "@/lib/documents";
 
-const BUCKET = "medical-projects";
+const DB_NAME = "medlingua-local-history";
+const DB_VERSION = 1;
+const DOCUMENTS = "documents";
+const STATES = "states";
 
-export interface SavedDocumentProject {
+interface DocumentRecord {
   id: string;
-  name: string;
-  createdAt: number;
-  updatedAt: number;
   document: ParsedDocument;
-  translations: Record<string, string>;
-  edited: Record<string, boolean>;
+  createdAt: number;
   sourceLanguage: string;
   targetLanguage: string;
-  storagePath?: string;
 }
 
-interface ProjectRow {
+interface StateRecord {
   id: string;
-  name: string;
-  file_name: string;
-  file_kind: DocKind;
-  storage_path: string;
-  document_metadata: Omit<ParsedDocument, "bytes">;
   translations: Record<string, string>;
   edited: Record<string, boolean>;
-  source_language: string;
-  target_language: string;
-  created_at: string;
-  updated_at: string;
+  updatedAt: number;
 }
 
-function mimeFor(kind: DocKind): string {
-  if (kind === "pdf") return "application/pdf";
-  if (kind === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+export interface StoredProject extends DocumentRecord, StateRecord {}
+
+export interface ProjectSummary {
+  id: string;
+  fileName: string;
+  kind: ParsedDocument["kind"];
+  createdAt: number;
+  updatedAt: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+  translatedCount: number;
+  totalSegments: number;
+  size: number;
 }
 
-function withoutBytes(document: ParsedDocument): Omit<ParsedDocument, "bytes"> {
-  return {
-    kind: document.kind,
-    fileName: document.fileName,
-    segments: document.segments,
-    pageCount: document.pageCount,
-    warnings: document.warnings,
-    ...(document.blocks ? { blocks: document.blocks } : {}),
-  };
-}
-
-function fromRow(row: ProjectRow, bytes = new ArrayBuffer(0)): SavedDocumentProject {
-  return {
-    id: row.id,
-    name: row.name,
-    createdAt: new Date(row.created_at).getTime(),
-    updatedAt: new Date(row.updated_at).getTime(),
-    document: { ...row.document_metadata, bytes },
-    translations: row.translations ?? {},
-    edited: row.edited ?? {},
-    sourceLanguage: row.source_language,
-    targetLanguage: row.target_language,
-    storagePath: row.storage_path,
-  };
-}
-
-async function currentUserId(): Promise<string> {
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) throw error ?? new Error("Inicia sesión para acceder al historial.");
-  return data.user.id;
-}
-
-export async function listDocumentProjects(): Promise<SavedDocumentProject[]> {
-  await currentUserId();
-  const { data, error } = await supabase
-    .from("medical_projects")
-    .select("id,name,file_name,file_kind,storage_path,document_metadata,translations,edited,source_language,target_language,created_at,updated_at")
-    .order("updated_at", { ascending: false });
-  if (error) throw error;
-  return ((data ?? []) as ProjectRow[]).map((row) => fromRow(row));
-}
-
-export async function loadDocumentProject(project: SavedDocumentProject): Promise<SavedDocumentProject> {
-  await currentUserId();
-  if (!project.storagePath) throw new Error("El proyecto no tiene un documento asociado.");
-  const { data, error } = await supabase.storage.from(BUCKET).download(project.storagePath);
-  if (error) throw error;
-  return { ...project, document: { ...project.document, bytes: await data.arrayBuffer() } };
-}
-
-export async function saveDocumentProject(project: SavedDocumentProject): Promise<void> {
-  const userId = await currentUserId();
-  const extension = project.document.kind;
-  const storagePath = `${userId}/${project.id}/original.${extension}`;
-
-  const { data: existing, error: lookupError } = await supabase
-    .from("medical_projects")
-    .select("id")
-    .eq("id", project.id)
-    .maybeSingle();
-  if (lookupError) throw lookupError;
-
-  if (!existing && project.document.bytes.byteLength > 0) {
-    const { error: uploadError } = await supabase.storage
-      .from(BUCKET)
-      .upload(storagePath, project.document.bytes, { contentType: mimeFor(project.document.kind), upsert: false });
-    if (uploadError) throw uploadError;
-  }
-
-  const { error } = await supabase.from("medical_projects").upsert({
-    id: project.id,
-    user_id: userId,
-    name: project.name,
-    file_name: project.document.fileName,
-    file_kind: project.document.kind,
-    storage_path: storagePath,
-    document_metadata: withoutBytes(project.document),
-    translations: project.translations,
-    edited: project.edited,
-    source_language: project.sourceLanguage,
-    target_language: project.targetLanguage,
-    created_at: new Date(project.createdAt).toISOString(),
-    updated_at: new Date(project.updatedAt).toISOString(),
+function request<T>(value: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    value.onsuccess = () => resolve(value.result);
+    value.onerror = () => reject(value.error ?? new Error("No se pudo acceder al historial local."));
   });
-  if (error) throw error;
 }
 
-export async function deleteDocumentProject(id: string): Promise<void> {
-  const userId = await currentUserId();
-  const { data: files, error: listError } = await supabase.storage.from(BUCKET).list(`${userId}/${id}`);
-  if (listError) throw listError;
-  if (files && files.length > 0) {
-    const { error: removeError } = await supabase.storage
-      .from(BUCKET)
-      .remove(files.map((file) => `${userId}/${id}/${file.name}`));
-    if (removeError) throw removeError;
-  }
-  const { error } = await supabase.from("medical_projects").delete().eq("id", id);
-  if (error) throw error;
+function transactionDone(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("No se pudo guardar el proyecto."));
+    transaction.onabort = () => reject(transaction.error ?? new Error("El guardado local fue cancelado."));
+  });
+}
+
+function openDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open(DB_NAME, DB_VERSION);
+    open.onupgradeneeded = () => {
+      const database = open.result;
+      if (!database.objectStoreNames.contains(DOCUMENTS)) database.createObjectStore(DOCUMENTS, { keyPath: "id" });
+      if (!database.objectStoreNames.contains(STATES)) database.createObjectStore(STATES, { keyPath: "id" });
+    };
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error ?? new Error("El navegador no permitió abrir el historial local."));
+  });
+}
+
+export function newProjectId(): string {
+  return `${Date.now()}-${crypto.randomUUID()}`;
+}
+
+export async function createLocalProject(input: {
+  id: string;
+  document: ParsedDocument;
+  sourceLanguage: string;
+  targetLanguage: string;
+  translations?: Record<string, string>;
+  edited?: Record<string, boolean>;
+}): Promise<void> {
+  const database = await openDatabase();
+  const tx = database.transaction([DOCUMENTS, STATES], "readwrite");
+  const { translations = {}, edited = {}, ...documentInput } = input;
+  tx.objectStore(DOCUMENTS).put({ ...documentInput, createdAt: Date.now() } satisfies DocumentRecord);
+  tx.objectStore(STATES).put({ id: input.id, translations, edited, updatedAt: Date.now() } satisfies StateRecord);
+  await transactionDone(tx);
+  database.close();
+}
+
+export async function saveLocalProjectState(
+  id: string,
+  translations: Record<string, string>,
+  edited: Record<string, boolean>,
+): Promise<void> {
+  const database = await openDatabase();
+  const tx = database.transaction(STATES, "readwrite");
+  tx.objectStore(STATES).put({ id, translations, edited, updatedAt: Date.now() } satisfies StateRecord);
+  await transactionDone(tx);
+  database.close();
+}
+
+export async function saveLocalProjectLanguages(
+  id: string,
+  sourceLanguage: string,
+  targetLanguage: string,
+): Promise<void> {
+  const database = await openDatabase();
+  const tx = database.transaction(DOCUMENTS, "readwrite");
+  const store = tx.objectStore(DOCUMENTS);
+  const record = await request(store.get(id) as IDBRequest<DocumentRecord | undefined>);
+  if (record) store.put({ ...record, sourceLanguage, targetLanguage } satisfies DocumentRecord);
+  await transactionDone(tx);
+  database.close();
+}
+
+export async function loadLocalProject(id: string): Promise<StoredProject | undefined> {
+  const database = await openDatabase();
+  const tx = database.transaction([DOCUMENTS, STATES], "readonly");
+  const [doc, state] = await Promise.all([
+    request(tx.objectStore(DOCUMENTS).get(id) as IDBRequest<DocumentRecord | undefined>),
+    request(tx.objectStore(STATES).get(id) as IDBRequest<StateRecord | undefined>),
+  ]);
+  database.close();
+  if (!doc) return undefined;
+  // A project document can survive an interrupted state write. Recover it
+  // instead of displaying it in History but refusing to open it.
+  const recoveredState: StateRecord = state ?? {
+    id,
+    translations: {},
+    edited: {},
+    updatedAt: doc.createdAt,
+  };
+  return { ...doc, ...recoveredState };
+}
+
+export async function listLocalProjects(): Promise<ProjectSummary[]> {
+  const database = await openDatabase();
+  const tx = database.transaction([DOCUMENTS, STATES], "readonly");
+  const [documents, states] = await Promise.all([
+    request(tx.objectStore(DOCUMENTS).getAll() as IDBRequest<DocumentRecord[]>),
+    request(tx.objectStore(STATES).getAll() as IDBRequest<StateRecord[]>),
+  ]);
+  database.close();
+  const stateById = new Map(states.map((state) => [state.id, state]));
+  return documents
+    .map((doc) => {
+      const state = stateById.get(doc.id);
+      return {
+        id: doc.id,
+        fileName: doc.document.fileName,
+        kind: doc.document.kind,
+        createdAt: doc.createdAt,
+        updatedAt: state?.updatedAt ?? doc.createdAt,
+        sourceLanguage: doc.sourceLanguage,
+        targetLanguage: doc.targetLanguage,
+        translatedCount: doc.document.segments.filter((segment) => state?.translations[segment.id]?.trim()).length,
+        totalSegments: doc.document.segments.length,
+        size: doc.document.bytes.byteLength,
+      };
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export async function deleteLocalProject(id: string): Promise<void> {
+  const database = await openDatabase();
+  const tx = database.transaction([DOCUMENTS, STATES], "readwrite");
+  tx.objectStore(DOCUMENTS).delete(id);
+  tx.objectStore(STATES).delete(id);
+  await transactionDone(tx);
+  database.close();
+}
+
+export async function clearLocalProjects(): Promise<void> {
+  const database = await openDatabase();
+  const tx = database.transaction([DOCUMENTS, STATES], "readwrite");
+  tx.objectStore(DOCUMENTS).clear();
+  tx.objectStore(STATES).clear();
+  await transactionDone(tx);
+  database.close();
 }

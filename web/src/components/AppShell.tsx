@@ -3,6 +3,7 @@ import {
   BookMarked,
   FileSearch,
   FileStack,
+  History as HistoryIcon,
   Languages,
   LogOut,
   Menu,
@@ -17,9 +18,9 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
 import { Logo } from "@/components/Logo";
+import { useAuth } from "@/context/auth";
 import { MEDICAL_MODEL } from "@/lib/toolkit";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/context/auth";
 
 interface NavItem {
   to: string;
@@ -31,28 +32,31 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: "/traducir", label: "Traducir", hint: "Texto clínico bidireccional", icon: Languages, color: "164 66% 50%" },
-  { to: "/correccion", label: "Corrección", hint: "Ortografía y siglas · doble check", icon: ScanText, color: "var(--info)" },
-  { to: "/terminologia", label: "Terminología", hint: "Siglas y abreviaturas", icon: SpellCheck2, color: "var(--violet)" },
-  { to: "/documentos", label: "Documentos", hint: "PDF · Word · PowerPoint", icon: FileStack, color: "var(--warn)" },
-  { to: "/video", label: "Vídeo", hint: "Subtítulos desde audio", icon: VideoIcon, color: "var(--coral)" },
-  { to: "/citas", label: "Citas", hint: "APA · AMA · Vancouver", icon: BookMarked, color: "var(--info)" },
-  { to: "/auditoria", label: "Auditoría", hint: "Bibliografía de un PDF", icon: FileSearch, color: "var(--warn)" },
-  { to: "/ajustes", label: "Ajustes", hint: "Idiomas y glosario", icon: Settings2, color: "var(--violet)" },
+  { to: "/correccion", label: "Corrección", hint: "Ortografía y siglas · doble check", icon: ScanText, color: "205 95% 68%" },
+  { to: "/terminologia", label: "Terminología", hint: "Siglas y abreviaturas", icon: SpellCheck2, color: "266 76% 68%" },
+  { to: "/documentos", label: "Documentos", hint: "PDF · Word · PowerPoint", icon: FileStack, color: "40 90% 61%" },
+  { to: "/historial", label: "Historial", hint: "Continuar proyectos locales", icon: HistoryIcon, color: "190 88% 58%" },
+  { to: "/video", label: "Vídeo", hint: "Subtítulos desde audio", icon: VideoIcon, color: "14 88% 66%" },
+  { to: "/citas", label: "Citas", hint: "APA · AMA · Vancouver", icon: BookMarked, color: "190 88% 58%" },
+  { to: "/auditoria", label: "Auditoría", hint: "Bibliografía de un PDF", icon: FileSearch, color: "28 94% 62%" },
+  { to: "/ajustes", label: "Ajustes", hint: "Idiomas y glosario", icon: Settings2, color: "266 76% 68%" },
 ];
 
 const SECTION_THEMES: Record<string, { primary: string; foreground: string }> = {
   "/traducir": { primary: "164 66% 50%", foreground: "168 70% 5%" },
   "/correccion": { primary: "205 95% 68%", foreground: "205 70% 7%" },
-  "/terminologia": { primary: "272 88% 72%", foreground: "272 65% 8%" },
+  "/terminologia": { primary: "266 76% 68%", foreground: "266 65% 8%" },
   "/documentos": { primary: "40 90% 61%", foreground: "35 75% 7%" },
-  "/video": { primary: "347 88% 68%", foreground: "347 70% 8%" },
+  "/historial": { primary: "190 88% 58%", foreground: "190 75% 6%" },
+  "/video": { primary: "14 88% 66%", foreground: "14 70% 8%" },
   "/citas": { primary: "190 88% 58%", foreground: "190 75% 6%" },
   "/auditoria": { primary: "28 94% 62%", foreground: "28 75% 7%" },
-  "/ajustes": { primary: "272 88% 72%", foreground: "272 65% 8%" },
+  "/ajustes": { primary: "266 76% 68%", foreground: "266 65% 8%" },
 };
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
-  const { user, signOut } = useAuth();
+  const { configured, user, signOut } = useAuth();
+
   return (
     <div className="flex h-full flex-col">
       <NavLink to="/" onClick={onNavigate} className="group flex items-center gap-3 px-5 py-6">
@@ -77,7 +81,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               cn(
                 "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors",
                 isActive
-                  ? "bg-[hsl(var(--nav-color)/0.11)] text-foreground"
+                  ? "bg-[hsl(var(--nav-color)/0.12)] text-foreground"
                   : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
               )
             }
@@ -95,8 +99,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border"
                   style={{
                     color: `hsl(${item.color})`,
-                    borderColor: `hsl(${item.color} / 0.24)`,
-                    background: `hsl(${item.color} / ${isActive ? 0.16 : 0.07})`,
+                    borderColor: `hsl(${item.color} / 0.25)`,
+                    background: `hsl(${item.color} / ${isActive ? 0.17 : 0.08})`,
                   }}
                 >
                   <item.icon className="h-[17px] w-[17px]" strokeWidth={1.9} />
@@ -120,16 +124,18 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <br />
           Crossref · PubMed · Exa
         </p>
-        <div className="mt-3 border-t border-border/60 pt-3">
-          <p className="truncate text-[11px] text-muted-foreground" title={user?.email}>{user?.email}</p>
-          <button
-            type="button"
-            onClick={() => void signOut()}
-            className="mt-2 inline-flex items-center gap-1.5 text-[11.5px] font-medium text-coral transition hover:brightness-125"
-          >
-            <LogOut className="h-3.5 w-3.5" /> Cerrar sesión
-          </button>
-        </div>
+        {configured && user ? (
+          <div className="mt-3 border-t border-border/60 pt-3">
+            <p className="truncate text-[11px] text-muted-foreground" title={user.email}>{user.email}</p>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="mt-2 inline-flex items-center gap-1.5 text-[11.5px] font-medium text-destructive transition hover:brightness-125"
+            >
+              <LogOut className="h-3.5 w-3.5" /> Cerrar sesión
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -199,21 +205,23 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
         ) : null}
       </AnimatePresence>
 
-      <header className="sticky top-0 z-20 border-b border-border/70 bg-background/70 backdrop-blur-xl">
-        <div className="flex items-start gap-3 px-4 py-4 sm:px-6 lg:px-8">
-          <button
-            type="button"
-            onClick={() => setMenuOpen(true)}
-            className="mt-0.5 rounded-lg border border-border p-2 text-muted-foreground transition hover:text-foreground lg:hidden"
-            aria-label="Abrir menú"
-          >
-            <Menu className="h-4 w-4" />
-          </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate bg-gradient-to-r from-foreground via-foreground to-info bg-clip-text font-serif text-xl font-semibold tracking-tight text-transparent sm:text-[26px]">{title}</h1>
-            <p className="mt-0.5 text-[13px] leading-snug text-muted-foreground">{subtitle}</p>
+      <header className="sticky top-0 z-20 border-b border-border/70 bg-gradient-to-r from-background/90 via-background/75 to-primary/10 backdrop-blur-xl">
+        <div className="grid gap-3 px-4 py-4 sm:flex sm:items-start sm:px-6 lg:px-8">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <button
+              type="button"
+              onClick={() => setMenuOpen(true)}
+              className="mt-0.5 shrink-0 rounded-lg border border-border p-2 text-muted-foreground transition hover:text-foreground lg:hidden"
+              aria-label="Abrir menú"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h1 className="font-serif text-xl font-semibold tracking-tight sm:truncate sm:text-[26px]">{title}</h1>
+              <p className="mt-0.5 text-[13px] leading-snug text-muted-foreground">{subtitle}</p>
+            </div>
           </div>
-          {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+          {actions ? <div className="flex w-full items-center gap-2 [&>button]:w-full sm:w-auto sm:shrink-0 sm:[&>button]:w-auto">{actions}</div> : null}
         </div>
       </header>
 

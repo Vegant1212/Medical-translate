@@ -13,7 +13,7 @@ import {
   Sparkles,
   Wand2,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
 
@@ -28,6 +28,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useSettings } from "@/context/settings";
 import { languageLabel } from "@/lib/languages";
+import { detectLanguageLocally } from "@/lib/language-detection";
 import {
   translateMedicalText,
   verifyAgainstSources,
@@ -37,6 +38,8 @@ import {
 } from "@/lib/medical";
 
 const SAMPLE = `Px masc. 67 a., HTA y DM2 de larga data, acude a URG por dolor torácico opresivo de 40 min irradiado a MSI, con diaforesis. TA 168/96, FC 104 lpm, SatO2 94% aa. ECG: elevación del ST en V2-V4. Troponina I ultrasensible 3,2 ng/mL. Se activa código IAM y se traslada a UCIC para ACTP primaria. AAS 300 mg + ticagrelor 180 mg VO, HNF 60 UI/kg IV en bolo.`;
+
+const MAX_TRANSLATION_CHARS = 50_000;
 
 interface OptionToggleProps {
   label: string;
@@ -186,6 +189,7 @@ export default function TranslatePage() {
   const [dragging, setDragging] = useState<boolean>(false);
   const [translateStart, setTranslateStart] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const translationControllerRef = useRef<AbortController | null>(null);
 
   const handleDroppedFile = useCallback(async (file: File): Promise<void> => {
     const name = file.name.toLowerCase();
@@ -199,6 +203,10 @@ export default function TranslatePage() {
     }
     try {
       const content = await file.text();
+      if (content.length > MAX_TRANSLATION_CHARS) {
+        toast.error(`El texto supera el máximo de ${MAX_TRANSLATION_CHARS.toLocaleString()} caracteres por traducción.`);
+        return;
+      }
       setText(content);
       setResult(undefined);
       toast.success(`«${file.name}» cargado (${content.length} caracteres)`);
@@ -207,8 +215,25 @@ export default function TranslatePage() {
     }
   }, []);
 
+  useEffect(() => {
+    translationControllerRef.current?.abort();
+    translationControllerRef.current = null;
+    setResult(undefined);
+  }, [
+    text,
+    settings.sourceLanguage,
+    settings.targetLanguage,
+    settings.register,
+    settings.domain,
+    settings.variants,
+    settings.glossaryPairs,
+    keepAcronyms,
+    expandAbbr,
+    backTranslation,
+  ]);
+
   const translate = useMutation({
-    mutationFn: () =>
+    mutationFn: (signal: AbortSignal) =>
       translateMedicalText({
         text,
         sourceLanguage: settings.sourceLanguage,
@@ -221,12 +246,22 @@ export default function TranslatePage() {
         expandAbbreviations: expandAbbr,
         withBackTranslation: backTranslation,
         customGlossary: settings.glossaryPairs,
+        signal,
       }),
-    onMutate: () => setTranslateStart(Date.now()),
+    onMutate: () => {
+      setResult(undefined);
+      setTranslateStart(Date.now());
+    },
     onSuccess: (data) => setResult(data),
     onError: (error: unknown) => {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("translation failed", error);
       toast.error(error instanceof Error ? error.message : "No se pudo traducir el texto.");
+    },
+    onSettled: (_data, _error, signal) => {
+      if (translationControllerRef.current?.signal === signal) {
+        translationControllerRef.current = null;
+      }
     },
   });
 
@@ -235,8 +270,25 @@ export default function TranslatePage() {
       toast.error("Escribe o pega un texto para traducir.");
       return;
     }
-    translate.mutate();
-  }, [text, translate]);
+    if (text.length > MAX_TRANSLATION_CHARS) {
+      toast.error(`El texto supera el máximo de ${MAX_TRANSLATION_CHARS.toLocaleString()} caracteres por traducción.`);
+      return;
+    }
+    if (settings.sourceLanguage !== "auto" && settings.sourceLanguage === settings.targetLanguage) {
+      toast.error("El idioma de origen y el idioma de destino deben ser distintos.");
+      return;
+    }
+    translationControllerRef.current?.abort();
+    const controller = new AbortController();
+    translationControllerRef.current = controller;
+    translate.mutate(controller.signal);
+  }, [text, settings.sourceLanguage, settings.targetLanguage, translate]);
+
+  const handleCancelTranslation = useCallback((): void => {
+    translationControllerRef.current?.abort();
+    translationControllerRef.current = null;
+    toast.info("Traducción cancelada.");
+  }, []);
 
   const handleDownloadWord = useCallback(async (): Promise<void> => {
     if (!result?.translation) return;
@@ -295,10 +347,11 @@ export default function TranslatePage() {
 
   const charCount = text.length;
   const terms = useMemo(() => result?.terms ?? [], [result]);
+  const detectedLanguage = useMemo(() => detectLanguageLocally(text), [text]);
 
   return (
     <AppShell
-      title="Traducción clínica"
+      title="Traducción médica especializada"
       subtitle="Bidireccional, por país y por nivel de complejidad — de lenguaje de paciente a artículo indexado."
       actions={
         <Button
@@ -320,7 +373,7 @@ export default function TranslatePage() {
       <div className="mx-auto max-w-[1400px] space-y-5">
         <Panel className="p-4">
           <div className="space-y-4">
-            <LanguageBar />
+            <LanguageBar detectedLanguage={detectedLanguage} />
             <div className="h-px hairline" />
             <RegisterDomainControls />
             <div className="grid gap-2 sm:grid-cols-3">
@@ -369,6 +422,7 @@ export default function TranslatePage() {
                   type="button"
                   size="sm"
                   variant="ghost"
+                  aria-label="Borrar texto original"
                   onClick={() => {
                     setText("");
                     setResult(undefined);
@@ -402,6 +456,12 @@ export default function TranslatePage() {
               <Textarea
                 value={text}
                 onChange={(event) => setText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    handleTranslate();
+                  }
+                }}
                 onDrop={(event) => {
                   event.stopPropagation();
                   const file = event.dataTransfer.files[0];
@@ -422,9 +482,11 @@ export default function TranslatePage() {
                 if (file) void handleDroppedFile(file);
               }}
             />
-            <footer className="flex items-center justify-between border-t border-border/60 px-4 py-2">
-              <span className="label-xs">{charCount.toLocaleString()} caracteres</span>
-              <span className="label-xs">Ctrl/⌘ + Intro no necesario · usa Traducir</span>
+            <footer className="flex flex-col items-start gap-1 border-t border-border/60 px-4 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <span className={cn("label-xs", charCount > MAX_TRANSLATION_CHARS && "text-destructive")}>
+                {charCount.toLocaleString()} / {MAX_TRANSLATION_CHARS.toLocaleString()} caracteres
+              </span>
+              <span className="label-xs">⌘/Ctrl + Intro · Traducir</span>
             </footer>
           </Panel>
 
@@ -478,6 +540,7 @@ export default function TranslatePage() {
                     active={translate.isPending}
                     startTime={translateStart}
                     charCount={charCount}
+                    onCancel={handleCancelTranslation}
                   />
                 </motion.div>
               ) : result ? (

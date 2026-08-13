@@ -2,7 +2,7 @@
 
 import { buildTranslatedOffice, parseOffice } from "./office";
 import { buildTranslatedPdf, parsePdf } from "./pdf";
-import { kindFromFile, protectBibliographySegments, type ParsedDocument } from "./types";
+import { kindFromFile, type ParsedDocument } from "./types";
 
 export * from "./types";
 export { extractPdfText } from "./pdf";
@@ -13,14 +13,16 @@ export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 export async function parseDocument(file: File): Promise<ParsedDocument> {
   const kind = kindFromFile(file);
   if (!kind) {
+    if (file.name.toLowerCase().endsWith(".doc")) {
+      throw new Error("El formato Word antiguo .doc no es compatible. Ábrelo en Word y guárdalo como .docx.");
+    }
     throw new Error("Formato no admitido. Sube un archivo .pdf, .docx o .pptx.");
   }
   if (file.size > MAX_FILE_BYTES) {
     throw new Error("El archivo supera los 25 MB. Divídelo en partes más pequeñas.");
   }
-  const parsed = kind === "pdf" ? await parsePdf(file) : await parseOffice(file, kind);
-  parsed.segments = protectBibliographySegments(parsed.segments);
-  return parsed;
+  if (kind === "pdf") return parsePdf(file);
+  return parseOffice(file, kind);
 }
 
 /** Rebuilds the document in its original format with the edited translations applied. */
@@ -28,29 +30,24 @@ export async function buildTranslatedDocument(
   document: ParsedDocument,
   translations: Record<string, string>,
 ): Promise<{ blob: Blob; warnings: string[]; fileName: string }> {
+  const missing = document.segments.filter((segment) => !translations[segment.id]?.trim());
+  if (missing.length > 0) {
+    throw new Error(`Faltan ${missing.length} segmentos por traducir. Completa la traducción antes de descargar el documento.`);
+  }
   const baseName = document.fileName.replace(/\.(pdf|docx|pptx)$/i, "");
   if (document.kind === "pdf") {
-    const protectedIds = new Set(
-      document.segments.filter((segment) => segment.protectedReason).map((segment) => segment.id),
-    );
-    const safeTranslations = Object.fromEntries(
-      Object.entries(translations).filter(([id]) => !protectedIds.has(id)),
-    );
     const result = await buildTranslatedPdf({
       bytes: document.bytes,
       blocks: document.blocks ?? [],
-      translations: safeTranslations,
+      translations,
+      sourceTexts: Object.fromEntries(document.segments.map((segment) => [segment.id, segment.text])),
     });
     return { ...result, fileName: `${baseName}-traducido.pdf` };
   }
   const result = await buildTranslatedOffice({
     bytes: document.bytes,
     kind: document.kind,
-    translations: Object.fromEntries(
-      Object.entries(translations).filter(
-        ([id]) => !document.segments.some((segment) => segment.id === id && segment.protectedReason),
-      ),
-    ),
+    translations,
   });
   return { ...result, fileName: `${baseName}-traducido.${document.kind}` };
 }
@@ -63,7 +60,7 @@ export function batchSegments<T extends { text: string }>(segments: T[], budget 
   let size = 0;
   for (const segment of segments) {
     const length = segment.text.length + 24;
-    if (current.length > 0 && (size + length > budget || current.length >= 12)) {
+    if (current.length > 0 && (size + length > budget || current.length >= 20)) {
       batches.push(current);
       current = [];
       size = 0;

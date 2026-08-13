@@ -12,8 +12,10 @@
  */
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, FileText, FileSearch, Languages, Loader2, ScanText, ShieldCheck } from "lucide-react";
+import { Check, FileText, FileSearch, Languages, Loader2, ScanText, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
+
+import { Button } from "@/components/ui/button";
 
 export interface ProgressStage {
   id: string;
@@ -30,20 +32,13 @@ const TEXT_STAGES: ProgressStage[] = [
 ];
 
 const DOC_STAGES: ProgressStage[] = [
-  { id: "parse", label: "Analizando documento", hint: "Extracción de segmentos · detección de idioma", icon: FileSearch },
-  { id: "translate", label: "Traduciendo segmentos", hint: "Lotes de texto · terminología MeSH · DCI/INN", icon: Languages },
-  { id: "glossary", label: "Reconstruyendo formato", hint: "Reescritura sobre original · maquetación intacta", icon: FileText },
-  { id: "verify", label: "Verificación clínica", hint: "Lista ISMP · ambigüedades · coherencia", icon: ShieldCheck },
+  { id: "connect", label: "Iniciando traducción", hint: "Conectando con el motor de traducción", icon: FileSearch },
+  { id: "translate", label: "Traduciendo segmentos", hint: "Traducción neuronal rápida por lotes", icon: Languages },
+  { id: "integrity", label: "Protegiendo datos", hint: "Cifras · dosis · DOI · referencias intactas", icon: ShieldCheck },
+  { id: "finish", label: "Finalizando traducción", hint: "Completando los últimos segmentos", icon: FileText },
 ];
 
-const STAGE_COLORS = ["var(--info)", "var(--primary)", "var(--violet)", "var(--warn)"] as const;
-
-function formatMinutes(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
+const STAGE_COLORS = ["var(--primary)", "var(--info)", "var(--violet)", "var(--coral)"] as const;
 
 export interface TranslationProgressProps {
   /** Elapsed milliseconds since the translation started. */
@@ -60,6 +55,10 @@ export interface TranslationProgressProps {
   doneUnits?: number;
   /** File name being translated — shown in document mode. */
   fileName?: string;
+  /** Live status from the active translation engine. */
+  statusMessage?: string;
+  /** Cancels the active request. Used for text translations. */
+  onCancel?: () => void;
 }
 
 export function TranslationProgress({
@@ -70,6 +69,8 @@ export function TranslationProgress({
   totalUnits,
   doneUnits,
   fileName,
+  statusMessage,
+  onCancel,
 }: TranslationProgressProps) {
   const [elapsed, setElapsed] = useState<number>(0);
   const isDocMode = typeof progressPercent === "number";
@@ -80,7 +81,7 @@ export function TranslationProgress({
     if (!active) return;
     const interval = window.setInterval(() => {
       setElapsed(Date.now() - startTime);
-    }, 500);
+    }, 50);
     return () => window.clearInterval(interval);
   }, [active, startTime]);
 
@@ -109,18 +110,25 @@ export function TranslationProgress({
     }
   }, [active]);
 
-  const minutes = formatMinutes(elapsed);
+  const elapsedSeconds = elapsed / 1000;
+  const elapsedLabel = `${Math.floor(elapsedSeconds / 60)} min ${Math.floor(elapsedSeconds % 60)} s`;
 
   // Overall progress (0..1)
   const overallProgress = isDocMode
     ? Math.max(0, Math.min((progressPercent ?? 0) / 100, 1))
     : Math.min(elapsed / 8000, 0.92);
 
-  const displayPercent = isDocMode
-    ? Math.round(progressPercent ?? 0)
-    : Math.round(overallProgress * 100);
+  const displayPercent = Math.round(progressPercent ?? 0);
+
+  const waitingMessage = elapsed >= 12_000
+    ? "La IA está terminando los últimos segmentos…"
+    : "La IA está procesando el texto…";
 
   const charsPerSec = elapsed > 500 ? Math.round((charCount / (elapsed / 1000)) * 10) / 10 : 0;
+  const secondsPerSegment = elapsedSeconds / Math.max(doneUnits ?? 1, 1);
+  const paceLabel = secondsPerSegment >= 60
+    ? `${(secondsPerSegment / 60).toFixed(1)} min/seg`
+    : `${Math.round(secondsPerSegment * 10) / 10} s/seg`;
 
   return (
     <motion.div
@@ -144,16 +152,6 @@ export function TranslationProgress({
           animate={{ scale: [1, 1.15, 1], opacity: [0.6, 1, 0.6] }}
           transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
         />
-        <motion.div
-          className="absolute -left-16 top-1/3 h-52 w-52 rounded-full bg-info/10 blur-3xl"
-          animate={{ x: [-12, 20, -12], y: [4, -16, 4] }}
-          transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-        />
-        <motion.div
-          className="absolute -right-16 bottom-0 h-52 w-52 rounded-full bg-violet/10 blur-3xl"
-          animate={{ x: [12, -18, 12], y: [-5, 14, -5] }}
-          transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
-        />
       </motion.div>
 
       {/* ── Central orb with percentage ── */}
@@ -162,8 +160,12 @@ export function TranslationProgress({
         {[0, 1, 2].map((ring) => (
           <motion.div
             key={ring}
-            className="absolute rounded-full border border-primary/20"
-            style={{ width: 130 + ring * 36, height: 130 + ring * 36 }}
+            className="absolute rounded-full border"
+            style={{
+              width: 130 + ring * 36,
+              height: 130 + ring * 36,
+              borderColor: `hsl(${STAGE_COLORS[ring]} / 0.22)`,
+            }}
             animate={{ scale: [1, 1.3, 1], opacity: [0.5, 0, 0.5] }}
             transition={{
               duration: 2.4,
@@ -183,10 +185,11 @@ export function TranslationProgress({
           style={{ transform: "rotate(-90deg)" }}
         >
           <defs>
-            <linearGradient id="translation-progress-gradient" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="hsl(var(--info))" />
-              <stop offset="45%" stopColor="hsl(var(--primary))" />
-              <stop offset="100%" stopColor="hsl(var(--violet))" />
+            <linearGradient id="translation-progress-ring" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="hsl(var(--primary))" />
+              <stop offset="38%" stopColor="hsl(var(--info))" />
+              <stop offset="72%" stopColor="hsl(var(--violet))" />
+              <stop offset="100%" stopColor="hsl(var(--coral))" />
             </linearGradient>
           </defs>
           <circle
@@ -203,8 +206,8 @@ export function TranslationProgress({
             cy="80"
             r="70"
             fill="none"
-            stroke="url(#translation-progress-gradient)"
-            strokeWidth="5"
+            stroke="url(#translation-progress-ring)"
+            strokeWidth="3"
             strokeLinecap="round"
             strokeDasharray={2 * Math.PI * 70}
             animate={{
@@ -212,7 +215,7 @@ export function TranslationProgress({
             }}
             transition={{ duration: 0.5, ease: "easeOut" }}
             style={{
-              filter: "drop-shadow(0 0 6px hsl(var(--primary) / 0.5))",
+              filter: "drop-shadow(0 0 7px hsl(var(--info) / 0.45))",
             }}
           />
         </svg>
@@ -222,26 +225,30 @@ export function TranslationProgress({
           className="relative flex h-[120px] w-[120px] flex-col items-center justify-center rounded-full"
           style={{
             background:
-              "radial-gradient(circle at 30% 30%, hsl(var(--primary) / 0.25), hsl(var(--primary) / 0.05) 70%)",
-            border: "1px solid hsl(var(--primary) / 0.3)",
-            boxShadow: "0 0 40px -8px hsl(var(--primary) / 0.4), inset 0 0 20px -4px hsl(var(--primary) / 0.15)",
+              "radial-gradient(circle at 28% 22%, hsl(var(--info) / 0.22), transparent 44%), radial-gradient(circle at 76% 78%, hsl(var(--violet) / 0.18), transparent 48%), hsl(var(--primary) / 0.055)",
+            border: "1px solid hsl(var(--info) / 0.32)",
+            boxShadow: "0 0 42px -10px hsl(var(--violet) / 0.38), inset 0 0 22px -5px hsl(var(--primary) / 0.18)",
           }}
           animate={{ scale: [1, 1.04, 1] }}
           transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
         >
-          {/* Big percentage in the center */}
-          <motion.div
-            key={displayPercent}
-            className="bg-gradient-to-br from-info via-primary to-violet bg-clip-text font-mono text-[44px] font-bold leading-none tabular-nums text-transparent"
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20 }}
-          >
-            {displayPercent}
-            <span className="ml-0.5 text-[19px]">%</span>
-          </motion.div>
+          {/* Text requests do not expose real progress, so only documents show a percentage. */}
+          {isDocMode ? (
+            <motion.div
+              key={displayPercent}
+              className="font-mono text-[30px] font-bold tabular-nums text-foreground"
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+            >
+              {displayPercent}
+              <span className="text-[14px]">%</span>
+            </motion.div>
+          ) : (
+            <Loader2 className="h-9 w-9 animate-spin text-primary" aria-hidden="true" />
+          )}
           <div className="mt-0.5 font-mono text-[8px] uppercase tracking-[0.2em] text-muted-foreground">
-            {isDocMode ? "segmentos" : "progreso"}
+            {isDocMode ? "segmentos" : "procesando"}
           </div>
 
         </motion.div>
@@ -261,22 +268,36 @@ export function TranslationProgress({
         </motion.div>
       ) : null}
 
+      {isDocMode && statusMessage ? (
+        <p className="mb-4 max-w-[420px] text-center text-[12.5px] leading-relaxed text-muted-foreground" role="status">
+          {statusMessage}
+        </p>
+      ) : null}
+
+      {!isDocMode ? (
+        <p className="mb-4 max-w-[420px] text-center text-[12.5px] leading-relaxed text-muted-foreground" role="status">
+          {waitingMessage}
+        </p>
+      ) : null}
+
       {/* ── Overall progress bar ── */}
       <div className="relative mb-7 h-1.5 w-full max-w-[420px] overflow-hidden rounded-full bg-secondary/60">
         <motion.div
           className="absolute inset-y-0 left-0 rounded-full"
           style={{
             background:
-              "linear-gradient(90deg, hsl(var(--info)), hsl(var(--primary)), hsl(var(--violet)), hsl(var(--warn)))",
+              "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--info)), hsl(var(--violet)), hsl(var(--coral)))",
             backgroundSize: "200% 100%",
-            boxShadow: "0 0 12px -2px hsl(var(--primary) / 0.5)",
+            boxShadow: "0 0 14px -2px hsl(var(--info) / 0.48)",
           }}
           animate={{
-            width: `${Math.max(4, overallProgress * 100)}%`,
+            width: isDocMode ? `${Math.max(4, overallProgress * 100)}%` : "38%",
+            x: isDocMode ? "0%" : ["-110%", "270%"],
             backgroundPosition: ["0% 0%", "200% 0%"],
           }}
           transition={{
             width: { duration: 0.4, ease: "easeOut" },
+            x: isDocMode ? { duration: 0 } : { duration: 1.8, repeat: Infinity, ease: "easeInOut" },
             backgroundPosition: { duration: 2, repeat: Infinity, ease: "linear" },
           }}
         />
@@ -318,14 +339,14 @@ export function TranslationProgress({
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors"
                 style={{
                   borderColor: isDone
-                    ? `hsl(${stageColor} / 0.38)`
+                    ? `hsl(${stageColor} / 0.32)`
                     : isActive
-                      ? `hsl(${stageColor} / 0.65)`
+                      ? `hsl(${stageColor} / 0.58)`
                       : "hsl(var(--border) / 0.5)",
                   background: isDone
-                    ? `hsl(${stageColor} / 0.12)`
+                    ? `hsl(${stageColor} / 0.1)`
                     : isActive
-                      ? `hsl(${stageColor} / 0.14)`
+                      ? `hsl(${stageColor} / 0.1)`
                       : "transparent",
                 }}
               >
@@ -396,44 +417,58 @@ export function TranslationProgress({
 
       {/* ── Live metrics ── */}
       <motion.div
-        className="mt-7 grid w-full max-w-[420px] grid-cols-3 gap-2"
+        className="mt-7 flex items-center gap-6"
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
       >
-        <div className="rounded-xl border border-info/20 bg-info/5 px-3 py-2.5 text-center">
-          <div className="font-mono text-[19px] font-semibold tabular-nums text-info">
-            {minutes}
+        <div className="text-center">
+          <div className="font-mono text-[18px] font-semibold tabular-nums text-primary">
+            {elapsedLabel}
           </div>
-          <div className="label-xs mt-0.5">minutos</div>
+          <div className="label-xs mt-0.5">tiempo</div>
         </div>
+        <div className="h-8 w-px bg-border/60" />
         {isDocMode ? (
-          <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 text-center">
-            <div className="font-mono text-[19px] font-semibold tabular-nums text-primary">
+          <div className="text-center">
+            <div className="font-mono text-[18px] font-semibold tabular-nums text-foreground">
               {doneUnits ?? 0}
               <span className="text-muted-foreground">/{totalUnits ?? 0}</span>
             </div>
             <div className="label-xs mt-0.5">segmentos</div>
           </div>
         ) : (
-          <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 text-center">
-            <div className="font-mono text-[19px] font-semibold tabular-nums text-primary">
+          <div className="text-center">
+            <div className="font-mono text-[18px] font-semibold tabular-nums text-foreground">
               {charCount.toLocaleString()}
             </div>
             <div className="label-xs mt-0.5">caracteres</div>
           </div>
         )}
-        <div className="rounded-xl border border-violet/20 bg-violet/5 px-3 py-2.5 text-center">
-          <div className="font-mono text-[19px] font-semibold tabular-nums text-violet">
+        <div className="h-8 w-px bg-border/60" />
+        <div className="text-center">
+          <div className="font-mono text-[18px] font-semibold tabular-nums text-foreground">
             {isDocMode && totalUnits
-              ? `${((elapsed / 60000) / Math.max(doneUnits ?? 1, 1)).toFixed(2)}`
+              ? paceLabel
               : charsPerSec > 0
                 ? charsPerSec.toFixed(0)
                 : "—"}
           </div>
-          <div className="label-xs mt-0.5">{isDocMode ? "min/segmento" : "car/s"}</div>
+          <div className="label-xs mt-0.5">{isDocMode ? "ritmo" : "car/s"}</div>
         </div>
       </motion.div>
+
+      {onCancel ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onCancel}
+          className="mt-5 gap-1.5 text-[12px] text-muted-foreground hover:text-destructive"
+        >
+          <X className="h-3.5 w-3.5" /> Cancelar proceso
+        </Button>
+      ) : null}
     </motion.div>
   );
 }
