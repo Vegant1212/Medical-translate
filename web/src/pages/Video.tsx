@@ -44,10 +44,11 @@ import {
 } from "@/lib/transcribe";
 import { cn } from "@/lib/utils";
 
-type Stage = "idle" | "extracting" | "transcribing" | "translated" | "translating" | "done";
+type Stage = "idle" | "uploading" | "extracting" | "transcribing" | "translated" | "translating" | "done";
 type SubFormat = "srt" | "vtt" | "bilingual";
 
 const STAGE_LABELS: Record<string, string> = {
+  uploading: "Subiendo archivo para transcripción…",
   extracting: "Extrayendo pista de audio del vídeo…",
   transcribing: "Transcribiendo el audio a texto…",
   translated: "Transcripción lista",
@@ -76,7 +77,11 @@ export default function VideoPage() {
   const [transcript, setTranscript] = useState<TranscriptionResult | undefined>(undefined);
   const [subtitles, setSubtitles] = useState<SubtitleSegment[]>([]);
   const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
-  const [extractionProgress, setExtractionProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+  const [extractionProgress, setExtractionProgress] = useState<{
+    current: number;
+    total: number;
+    unit: "seconds" | "bytes";
+  }>({ current: 0, total: 0, unit: "bytes" });
   const [summary, setSummary] = useState<string>("");
   const [specialty, setSpecialty] = useState<string>("");
   const [subFormat, setSubFormat] = useState<SubFormat>("srt");
@@ -84,20 +89,21 @@ export default function VideoPage() {
 
   const transcribe = useMutation({
     mutationFn: async (inputFile: File): Promise<TranscriptionResult> => {
-      setStage("extracting");
-      setExtractionProgress({ current: 0, total: 0 });
+      setStage("uploading");
+      setExtractionProgress({ current: 0, total: inputFile.size, unit: "bytes" });
       const result = await transcribeMedia(inputFile, (st, mediaProgress) => {
-        if (st.startsWith("Extrayendo")) {
+        if (st.startsWith("Subiendo")) {
+          setStage("uploading");
+          if (mediaProgress) setExtractionProgress(mediaProgress);
+        } else if (st.startsWith("Extrayendo") || st.startsWith("Preparando")) {
           setStage("extracting");
-          if (mediaProgress) {
-            setExtractionProgress({ current: mediaProgress.currentTime, total: mediaProgress.totalTime });
-          }
+          if (mediaProgress) setExtractionProgress(mediaProgress);
         } else {
           setStage("transcribing");
         }
       });
       setStage("translated");
-      setExtractionProgress((previous) => ({ current: previous.total, total: previous.total }));
+      setExtractionProgress((previous) => ({ ...previous, current: previous.total }));
       return result;
     },
     onSuccess: (data) => {
@@ -126,7 +132,7 @@ export default function VideoPage() {
     onError: (error: unknown) => {
       console.error("transcription failed", error);
       setStage("idle");
-      setExtractionProgress({ current: 0, total: 0 });
+      setExtractionProgress({ current: 0, total: 0, unit: "bytes" });
       toast.error(error instanceof Error ? error.message : "No se pudo transcribir el archivo.");
     },
   });
@@ -181,7 +187,7 @@ export default function VideoPage() {
       setSummary("");
       setSpecialty("");
       setStage("idle");
-      setExtractionProgress({ current: 0, total: 0 });
+      setExtractionProgress({ current: 0, total: 0, unit: "bytes" });
       transcribe.mutate(f);
     },
     [transcribe],
@@ -292,19 +298,21 @@ export default function VideoPage() {
                   <div className="relative flex h-28 w-28 items-center justify-center rounded-full bg-elevated shadow-glow">
                     <div className="absolute inset-0 animate-spin rounded-full border-[7px] border-primary/15 border-t-primary border-r-violet" />
                     <span className="text-3xl font-semibold tabular-nums">
-                      {stage === "extracting" && extractionProgress.total > 0 ? `${extractionPercent}%` : "•••"}
+                      {(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0 ? `${extractionPercent}%` : "•••"}
                     </span>
                   </div>
                   <div className="text-center">
                     <p className="font-serif text-xl">{STAGE_LABELS[stage]}</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      {stage === "extracting" && extractionProgress.total > 0
-                        ? `${formatDuration(extractionProgress.current)} de ${formatDuration(extractionProgress.total)}`
-                        : "Preparando el archivo…"}
+                      {(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0
+                        ? extractionProgress.unit === "bytes"
+                          ? `${formatBytes(extractionProgress.current)} de ${formatBytes(extractionProgress.total)}`
+                          : `${formatDuration(extractionProgress.current)} de ${formatDuration(extractionProgress.total)}`
+                        : stage === "transcribing" ? "La IA está procesando el audio…" : "Preparando el archivo…"}
                     </p>
                   </div>
                   <Progress
-                    value={stage === "extracting" && extractionProgress.total > 0 ? extractionPercent : 35}
+                    value={(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0 ? extractionPercent : 100}
                     className={cn("h-2 w-full max-w-md bg-secondary", extractionProgress.total === 0 && "animate-pulse")}
                   />
                   <p className="text-xs text-muted-foreground">Mantén esta pestaña abierta durante el procesamiento.</p>
@@ -364,7 +372,7 @@ export default function VideoPage() {
                   </div>
                 </div>
                 <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-secondary">
-                  {stage === "extracting" && extractionProgress.total > 0 ? (
+                  {(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0 ? (
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-primary via-violet to-coral transition-[width] duration-300"
                       style={{ width: `${Math.min(100, (extractionProgress.current / extractionProgress.total) * 100)}%` }}
@@ -373,13 +381,15 @@ export default function VideoPage() {
                     <div className="h-full w-1/3 animate-shimmer bg-gradient-to-r from-transparent via-primary to-transparent" />
                   )}
                 </div>
-                {stage === "extracting" && extractionProgress.total > 0 ? (
+                {(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0 ? (
                   <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                     <span>
-                      {Math.round((extractionProgress.current / extractionProgress.total) * 100)}% extraído
+                      {Math.round((extractionProgress.current / extractionProgress.total) * 100)}% {stage === "uploading" ? "subido" : "preparado"}
                     </span>
                     <span>
-                      {formatDuration(extractionProgress.current)} / {formatDuration(extractionProgress.total)}
+                      {extractionProgress.unit === "bytes"
+                        ? `${formatBytes(extractionProgress.current)} / ${formatBytes(extractionProgress.total)}`
+                        : `${formatDuration(extractionProgress.current)} / ${formatDuration(extractionProgress.total)}`}
                     </span>
                   </div>
                 ) : null}
