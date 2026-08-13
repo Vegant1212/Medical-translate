@@ -72,6 +72,7 @@ export default function DocumentsPage() {
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [edited, setEdited] = useState<Record<string, boolean>>({});
   const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
+  const [completionPercent, setCompletionPercent] = useState<number>(0);
   const [filter, setFilter] = useState<Filter>("todos");
   const [search, setSearch] = useState<string>("");
   const [dragging, setDragging] = useState<boolean>(false);
@@ -99,6 +100,7 @@ export default function DocumentsPage() {
       nextTranslations: Record<string, string>,
       nextEdited: Record<string, boolean>,
       id = currentProjectId ?? crypto.randomUUID(),
+      refreshHistory = true,
     ): Promise<string> => {
       const previous = projects.find((project) => project.id === id);
       const now = Date.now();
@@ -114,7 +116,7 @@ export default function DocumentsPage() {
         targetLanguage: settings.targetLanguage,
       });
       setCurrentProjectId(id);
-      await refreshProjects();
+      if (refreshHistory) await refreshProjects();
       return id;
     },
     [currentProjectId, projects, refreshProjects, settings.sourceLanguage, settings.targetLanguage],
@@ -127,6 +129,7 @@ export default function DocumentsPage() {
       setTranslations({});
       setEdited({});
       setProgress({ done: 0, total: 0 });
+      setCompletionPercent(0);
       setExportWarnings([]);
       const id = crypto.randomUUID();
       setCurrentProjectId(id);
@@ -147,12 +150,15 @@ export default function DocumentsPage() {
       if (!document) throw new Error("Sube un documento primero.");
       const protectedSegments = document.segments.filter((segment) => segment.protectedReason === "bibliography");
       const translatableSegments = document.segments.filter((segment) => !segment.protectedReason);
-      const batches = batchSegments(translatableSegments);
       const protectedMap = Object.fromEntries(protectedSegments.map((segment) => [segment.id, segment.text]));
-      const translatedMap: Record<string, string> = {};
+      const translatedMap: Record<string, string> = { ...translations };
+      const pendingSegments = translatableSegments.filter((segment) => !translatedMap[segment.id]);
+      const batches = batchSegments(pendingSegments, 6000);
+      const projectId = currentProjectId ?? crypto.randomUUID();
       setTranslations((previous) => ({ ...previous, ...protectedMap }));
-      setProgress({ done: protectedSegments.length, total: document.segments.length });
-      let done = protectedSegments.length;
+      let done = protectedSegments.length + (translatableSegments.length - pendingSegments.length);
+      setProgress({ done, total: document.segments.length });
+      setCompletionPercent(translatableSegments.length > 0 ? Math.round(((done - protectedSegments.length) / translatableSegments.length) * 80) : 80);
       for (const batch of batches) {
         const map = await translateSegments({
           segments: batch.map((segment) => ({ id: segment.id, text: segment.text })),
@@ -167,6 +173,9 @@ export default function DocumentsPage() {
         setTranslations((previous) => ({ ...previous, ...map }));
         done += batch.length;
         setProgress({ done, total: document.segments.length });
+        setCompletionPercent(Math.min(80, Math.round(((done - protectedSegments.length) / Math.max(1, translatableSegments.length)) * 80)));
+        // Save every completed batch so a refresh or network interruption can resume here.
+        await persistProject(document, { ...protectedMap, ...translatedMap }, edited, projectId, false);
       }
 
       // A final model pass fixes spelling, punctuation and PDF-extraction artifacts
@@ -178,8 +187,10 @@ export default function DocumentsPage() {
           source: segment.text,
           translation: translatedMap[segment.id] ?? segment.text,
         })),
+        6000,
       );
-      for (const batch of reviewBatches) {
+      for (let index = 0; index < reviewBatches.length; index += 1) {
+        const batch = reviewBatches[index];
         const reviewed = await reviewTranslatedSegments({
           segments: batch.map(({ id, source, translation }) => ({ id, source, translation })),
           targetLanguage: settings.targetLanguage,
@@ -189,8 +200,11 @@ export default function DocumentsPage() {
         });
         Object.assign(translatedMap, reviewed);
         setTranslations((previous) => ({ ...previous, ...reviewed }));
+        setCompletionPercent(80 + Math.round(((index + 1) / Math.max(1, reviewBatches.length)) * 19));
+        await persistProject(document, { ...protectedMap, ...translatedMap }, edited, projectId, false);
       }
-      await persistProject(document, { ...protectedMap, ...translatedMap }, edited);
+      await persistProject(document, { ...protectedMap, ...translatedMap }, edited, projectId, true);
+      setCompletionPercent(100);
       return translatableSegments.length;
     },
     onMutate: () => setTranslateStart(Date.now()),
@@ -388,7 +402,7 @@ export default function DocumentsPage() {
                       active={translate.isPending}
                       startTime={translateStart}
                       charCount={totalChars}
-                      progressPercent={progressPercent}
+                      progressPercent={completionPercent}
                       totalUnits={progress.total}
                       doneUnits={progress.done}
                       fileName={document.fileName}
