@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SettingsProvider } from "@/context/settings";
 import { AuthProvider } from "@/context/auth";
 import { RequireAuth } from "@/components/RequireAuth";
+import { InterfaceLanguageProvider } from "@/context/interface-language";
 
 import Audit from "./pages/Audit";
 import Citations from "./pages/Citations";
@@ -29,6 +30,7 @@ const queryClient = new QueryClient({
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
+    <InterfaceLanguageProvider>
     <SettingsProvider>
       <TooltipProvider delayDuration={200}>
         <Toaster position="top-center" />
@@ -50,6 +52,7 @@ const App = () => (
         </BrowserRouter>
       </TooltipProvider>
     </SettingsProvider>
+    </InterfaceLanguageProvider>
     </AuthProvider>
   </QueryClientProvider>
 );
