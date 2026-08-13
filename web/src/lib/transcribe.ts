@@ -92,12 +92,16 @@ export function fileToBase64(file: File | Blob): Promise<string> {
  * Extracts the audio track from a video/audio File using the browser's
  * MediaRecorder + HTMLMediaElement pipeline. Returns a WebM/Opus blob.
  */
-export async function extractAudioFromFile(file: File): Promise<{ blob: Blob; mediaType: string }> {
+export async function extractAudioFromFile(
+  file: File,
+  onProgress?: (currentTime: number, totalTime: number) => void,
+): Promise<{ blob: Blob; mediaType: string }> {
   // If already a pure audio format, use it directly.
   const name = file.name.toLowerCase();
   const audioExtensions = [".mp3", ".wav", ".ogg", ".aac", ".flac", ".opus", ".m4a"];
   if (audioExtensions.some((ext) => name.endsWith(ext))) {
     const mediaType = file.type || guessAudioMime(name);
+    onProgress?.(1, 1);
     return { blob: file, mediaType: mediaType || "audio/mpeg" };
   }
 
@@ -148,6 +152,13 @@ export async function extractAudioFromFile(file: File): Promise<{ blob: Blob; me
     });
 
     recorder.start(1000);
+    const reportProgress = (): void => {
+      if (Number.isFinite(audioEl.duration) && audioEl.duration > 0) {
+        onProgress?.(audioEl.currentTime, audioEl.duration);
+      }
+    };
+    audioEl.addEventListener("timeupdate", reportProgress);
+    reportProgress();
     try {
       await audioEl.play();
     } catch (error) {
@@ -166,6 +177,8 @@ export async function extractAudioFromFile(file: File): Promise<{ blob: Blob; me
 
     recorder.stop();
     const blob = await recordingDone;
+    onProgress?.(audioEl.duration || 1, audioEl.duration || 1);
+    audioEl.removeEventListener("timeupdate", reportProgress);
     audioCtx.close();
 
     return { blob, mediaType: mimeType };
@@ -323,7 +336,7 @@ async function transcribeWithScribe(
  */
 export async function transcribeMedia(
   file: File,
-  onProgress?: (stage: string) => void,
+  onProgress?: (stage: string, mediaProgress?: { currentTime: number; totalTime: number }) => void,
   signal?: AbortSignal,
 ): Promise<TranscriptionResult> {
   if (file.size > MAX_VIDEO_BYTES) {
@@ -331,7 +344,9 @@ export async function transcribeMedia(
   }
 
   onProgress?.("Extrayendo pista de audio…");
-  const { blob, mediaType } = await extractAudioFromFile(file);
+  const { blob, mediaType } = await extractAudioFromFile(file, (currentTime, totalTime) => {
+    onProgress?.("Extrayendo pista de audio…", { currentTime, totalTime });
+  });
 
   // Gateway has a smaller payload limit, so for large audio use Scribe (multipart upload).
   const useScribe = blob.size > 20 * 1024 * 1024;
