@@ -76,6 +76,7 @@ export default function VideoPage() {
   const [transcript, setTranscript] = useState<TranscriptionResult | undefined>(undefined);
   const [subtitles, setSubtitles] = useState<SubtitleSegment[]>([]);
   const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
+  const [extractionProgress, setExtractionProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [summary, setSummary] = useState<string>("");
   const [specialty, setSpecialty] = useState<string>("");
   const [subFormat, setSubFormat] = useState<SubFormat>("srt");
@@ -84,11 +85,19 @@ export default function VideoPage() {
   const transcribe = useMutation({
     mutationFn: async (inputFile: File): Promise<TranscriptionResult> => {
       setStage("extracting");
-      const result = await transcribeMedia(inputFile, (st) => {
-        if (st.startsWith("Extrayendo")) setStage("extracting");
-        else setStage("transcribing");
+      setExtractionProgress({ current: 0, total: 0 });
+      const result = await transcribeMedia(inputFile, (st, mediaProgress) => {
+        if (st.startsWith("Extrayendo")) {
+          setStage("extracting");
+          if (mediaProgress) {
+            setExtractionProgress({ current: mediaProgress.currentTime, total: mediaProgress.totalTime });
+          }
+        } else {
+          setStage("transcribing");
+        }
       });
       setStage("translated");
+      setExtractionProgress((previous) => ({ current: previous.total, total: previous.total }));
       return result;
     },
     onSuccess: (data) => {
@@ -117,6 +126,7 @@ export default function VideoPage() {
     onError: (error: unknown) => {
       console.error("transcription failed", error);
       setStage("idle");
+      setExtractionProgress({ current: 0, total: 0 });
       toast.error(error instanceof Error ? error.message : "No se pudo transcribir el archivo.");
     },
   });
@@ -171,6 +181,7 @@ export default function VideoPage() {
       setSummary("");
       setSpecialty("");
       setStage("idle");
+      setExtractionProgress({ current: 0, total: 0 });
       transcribe.mutate(f);
     },
     [transcribe],
@@ -325,8 +336,25 @@ export default function VideoPage() {
                   </div>
                 </div>
                 <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-secondary">
-                  <div className="h-full w-1/3 animate-shimmer bg-gradient-to-r from-transparent via-primary to-transparent" />
+                  {stage === "extracting" && extractionProgress.total > 0 ? (
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-primary via-violet to-coral transition-[width] duration-300"
+                      style={{ width: `${Math.min(100, (extractionProgress.current / extractionProgress.total) * 100)}%` }}
+                    />
+                  ) : (
+                    <div className="h-full w-1/3 animate-shimmer bg-gradient-to-r from-transparent via-primary to-transparent" />
+                  )}
                 </div>
+                {stage === "extracting" && extractionProgress.total > 0 ? (
+                  <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      {Math.round((extractionProgress.current / extractionProgress.total) * 100)}% extraído
+                    </span>
+                    <span>
+                      {formatDuration(extractionProgress.current)} / {formatDuration(extractionProgress.total)}
+                    </span>
+                  </div>
+                ) : null}
               </Panel>
             ) : null}
 
