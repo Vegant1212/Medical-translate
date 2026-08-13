@@ -80,7 +80,7 @@ export default function VideoPage() {
   const [extractionProgress, setExtractionProgress] = useState<{
     current: number;
     total: number;
-    unit: "seconds" | "bytes";
+    unit: "seconds" | "bytes" | "percent";
   }>({ current: 0, total: 0, unit: "bytes" });
   const [summary, setSummary] = useState<string>("");
   const [specialty, setSpecialty] = useState<string>("");
@@ -307,6 +307,8 @@ export default function VideoPage() {
                       {(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0
                         ? extractionProgress.unit === "bytes"
                           ? `${formatBytes(extractionProgress.current)} de ${formatBytes(extractionProgress.total)}`
+                          : extractionProgress.unit === "percent"
+                            ? "Convirtiendo el video a audio comprimido…"
                           : `${formatDuration(extractionProgress.current)} de ${formatDuration(extractionProgress.total)}`
                         : stage === "transcribing" ? "La IA está procesando el audio…" : "Preparando el archivo…"}
                     </p>
@@ -389,6 +391,8 @@ export default function VideoPage() {
                     <span>
                       {extractionProgress.unit === "bytes"
                         ? `${formatBytes(extractionProgress.current)} / ${formatBytes(extractionProgress.total)}`
+                        : extractionProgress.unit === "percent"
+                          ? "Conversión local"
                         : `${formatDuration(extractionProgress.current)} / ${formatDuration(extractionProgress.total)}`}
                     </span>
                   </div>
