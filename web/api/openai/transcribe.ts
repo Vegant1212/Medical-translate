@@ -11,7 +11,9 @@ export default async function handler(request: IncomingMessage, response: Server
     const auth = await fetch(`${supabaseUrl}/auth/v1/user`, { headers: { apikey: publishableKey, Authorization: `Bearer ${token}` } });
     if (!auth.ok) return send(response, 401, { error: { message: "La sesión no es válida." } });
     const body = await readJson(request); if (!body.audio || body.audio.length > 3_800_000) return send(response, 413, { error: { message: "El audio es demasiado grande." } });
-    const form = new FormData(); form.append("model", "gpt-4o-mini-transcribe"); form.append("response_format", "verbose_json"); form.append("timestamp_granularities[]", "segment"); form.append("file", new Blob([Buffer.from(body.audio, "base64")], { type: body.mediaType || "audio/mpeg" }), body.filename || "audio.mp3");
+    // Whisper supports verbose_json and segment timestamps. The newer GPT-4o
+    // transcription models reject this response-format/timestamp combination.
+    const form = new FormData(); form.append("model", "whisper-1"); form.append("response_format", "verbose_json"); form.append("timestamp_granularities[]", "segment"); form.append("file", new Blob([Buffer.from(body.audio, "base64")], { type: body.mediaType || "audio/mpeg" }), body.filename || "audio.mp3");
     const upstream = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form });
     const data = await upstream.json(); if (!upstream.ok) { console.error("OpenAI transcription failed", upstream.status); return send(response, upstream.status === 429 ? 429 : 502, { error: { message: "OpenAI no pudo transcribir el audio." } }); } send(response, 200, data);
   } catch (error) { console.error("Private transcription endpoint failed", error); send(response, error instanceof Error && error.message === "PAYLOAD_TOO_LARGE" ? 413 : 500, { error: { message: "No se pudo procesar la transcripción." } }); }
