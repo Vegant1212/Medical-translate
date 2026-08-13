@@ -107,6 +107,11 @@ export async function extractAudioFromFile(file: File): Promise<{ blob: Blob; me
     const audioEl = new Audio();
     audioEl.src = url;
     audioEl.crossOrigin = "anonymous";
+    // Browsers block audible autoplay once the original file-picker gesture has
+    // finished. Muted playback is allowed and the MediaElementSource still
+    // supplies the audio samples to the recorder without playing them aloud.
+    audioEl.muted = true;
+    audioEl.playsInline = true;
 
     await new Promise<void>((resolve, reject) => {
       audioEl.addEventListener("loadedmetadata", () => resolve(), { once: true });
@@ -119,12 +124,14 @@ export async function extractAudioFromFile(file: File): Promise<{ blob: Blob; me
     const AudioCtxClass: typeof AudioContext =
       window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const audioCtx = new AudioCtxClass();
+    if (audioCtx.state === "suspended") {
+      await audioCtx.resume().catch(() => undefined);
+    }
     const source = audioCtx.createMediaElementSource(audioEl);
 
     // Create a MediaStreamDestination to capture audio
     const dest = audioCtx.createMediaStreamDestination();
     source.connect(dest);
-    source.connect(audioCtx.destination);
 
     // Pick the best supported mime type
     const mimeType = pickRecorderMime();
@@ -141,7 +148,16 @@ export async function extractAudioFromFile(file: File): Promise<{ blob: Blob; me
     });
 
     recorder.start(1000);
-    await audioEl.play();
+    try {
+      await audioEl.play();
+    } catch (error) {
+      recorder.stop();
+      await audioCtx.close();
+      throw new Error(
+        "El navegador bloqueó la extracción automática del audio. Pulsa nuevamente el archivo para autorizar el procesamiento.",
+        { cause: error },
+      );
+    }
 
     // Wait for playback to finish
     await new Promise<void>((resolve) => {
