@@ -90,7 +90,7 @@ export default function VideoPage() {
   const transcribe = useMutation({
     mutationFn: async (inputFile: File): Promise<TranscriptionResult> => {
       setStage("uploading");
-      setExtractionProgress({ current: 0, total: inputFile.size, unit: "bytes" });
+      setExtractionProgress({ current: 0, total: 0, unit: "seconds" });
       const result = await transcribeMedia(inputFile, (st, mediaProgress) => {
         if (st.startsWith("Subiendo")) {
           setStage("uploading");
