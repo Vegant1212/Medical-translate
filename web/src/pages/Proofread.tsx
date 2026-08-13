@@ -19,7 +19,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
-import { CopyButton, LanguageBar, Panel, RegisterDomainControls, Spinner, StatusPill } from "@/components/controls";
+import { CopyButton, LanguageBar, Panel, ProcessPercentage, RegisterDomainControls, Spinner, StatusPill } from "@/components/controls";
 import { textToDocx } from "@/lib/docx-export";
 import {
   buildProofreadReport,
@@ -516,6 +516,7 @@ export default function ProofreadPage() {
             <div className="relative min-h-[340px] px-4 py-3.5">
               {proofread.isPending ? (
                 <div className="absolute inset-0 overflow-hidden">
+                  <div className="mx-auto mt-4 flex max-w-sm justify-center px-4"><ProcessPercentage label="Revisión ortográfica y médica" /></div>
                   <div className="h-[2px] w-full animate-scanline bg-gradient-to-r from-transparent via-primary to-transparent" />
                   <div className="space-y-2.5 p-1">
                     {[88, 72, 94, 60, 82, 68].map((width, index) => (
