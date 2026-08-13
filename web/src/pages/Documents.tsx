@@ -153,7 +153,7 @@ export default function DocumentsPage() {
       const protectedMap = Object.fromEntries(protectedSegments.map((segment) => [segment.id, segment.text]));
       const translatedMap: Record<string, string> = { ...translations };
       const pendingSegments = translatableSegments.filter((segment) => !translatedMap[segment.id]);
-      const batches = batchSegments(pendingSegments, 6000);
+      const batches = batchSegments(pendingSegments, 3000);
       const projectId = currentProjectId ?? crypto.randomUUID();
       setTranslations((previous) => ({ ...previous, ...protectedMap }));
       let done = protectedSegments.length + (translatableSegments.length - pendingSegments.length);
@@ -187,7 +187,7 @@ export default function DocumentsPage() {
           source: segment.text,
           translation: translatedMap[segment.id] ?? segment.text,
         })),
-        6000,
+        3000,
       );
       for (let index = 0; index < reviewBatches.length; index += 1) {
         const batch = reviewBatches[index];
