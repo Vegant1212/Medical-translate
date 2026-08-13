@@ -262,26 +262,51 @@ async function transcribeWithGateway(
 async function transcribeWithScribe(
   audioBlob: Blob,
   signal?: AbortSignal,
+  onUploadProgress?: (loaded: number, total: number) => void,
 ): Promise<TranscriptionResult> {
   const formData = new FormData();
   formData.append("model_id", "scribe_v2");
   formData.append("diarize", "true");
-  formData.append("file", audioBlob, "audio.webm");
+  formData.append("file", audioBlob, audioBlob instanceof File ? audioBlob.name : "audio.webm");
 
-  const response = await fetch(`${TOOLKIT_URL}/v2/elevenlabs/v1/speech-to-text`, {
-    method: "POST",
-    headers: {},
-    body: formData,
-    signal,
+  // XMLHttpRequest is used here because fetch does not expose upload progress.
+  // This is especially important for large video files, where an indeterminate
+  // loader otherwise looks frozen while the browser is still uploading.
+  const data = await new Promise<ScribeResponse>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const abort = (): void => xhr.abort();
+    xhr.open("POST", `${TOOLKIT_URL}/v2/elevenlabs/v1/speech-to-text`);
+    xhr.upload.addEventListener("progress", (event) => {
+      onUploadProgress?.(event.loaded, event.lengthComputable ? event.total : audioBlob.size);
+    });
+    xhr.addEventListener("load", () => {
+      signal?.removeEventListener("abort", abort);
+      if (xhr.status < 200 || xhr.status >= 300) {
+        console.error("scribe transcription failed", xhr.status, xhr.responseText.slice(0, 300));
+        reject(new Error("No se pudo transcribir el archivo. Inténtalo de nuevo."));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText) as ScribeResponse);
+      } catch {
+        reject(new Error("El servicio devolvió una respuesta inválida al transcribir."));
+      }
+    });
+    xhr.addEventListener("error", () => {
+      signal?.removeEventListener("abort", abort);
+      reject(new Error("Se interrumpió la subida del archivo. Revisa tu conexión e inténtalo de nuevo."));
+    });
+    xhr.addEventListener("abort", () => {
+      signal?.removeEventListener("abort", abort);
+      reject(new DOMException("La transcripción fue cancelada.", "AbortError"));
+    });
+    if (signal?.aborted) {
+      reject(new DOMException("La transcripción fue cancelada.", "AbortError"));
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+    xhr.send(formData);
   });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    console.error("scribe transcription failed", response.status, detail.slice(0, 300));
-    throw new Error("No se pudo transcribir el audio con Scribe. Inténtalo de nuevo.");
-  }
-
-  const data = (await response.json()) as ScribeResponse;
 
   // Build segments from word-level timestamps, grouping into ~5s windows
   const words = data.words ?? [];
@@ -336,16 +361,31 @@ async function transcribeWithScribe(
  */
 export async function transcribeMedia(
   file: File,
-  onProgress?: (stage: string, mediaProgress?: { currentTime: number; totalTime: number }) => void,
+  onProgress?: (stage: string, mediaProgress?: { current: number; total: number; unit: "seconds" | "bytes" }) => void,
   signal?: AbortSignal,
 ): Promise<TranscriptionResult> {
   if (file.size > MAX_VIDEO_BYTES) {
     throw new Error("El archivo supera los 100 MB. Usa un fragmento más corto.");
   }
 
-  onProgress?.("Extrayendo pista de audio…");
+  const isVideo = file.type.startsWith("video/") || /\.(mp4|webm|mov|avi|mkv)$/i.test(file.name);
+
+  // Upload video files directly. Browser-based audio extraction requires
+  // real-time media playback and can hang because of autoplay/codec policies.
+  if (isVideo) {
+    onProgress?.("Subiendo video para transcripción…", { current: 0, total: file.size, unit: "bytes" });
+    return transcribeWithScribe(file, signal, (loaded, total) => {
+      onProgress?.("Subiendo video para transcripción…", {
+        current: loaded,
+        total: total || file.size,
+        unit: "bytes",
+      });
+    });
+  }
+
+  onProgress?.("Preparando audio…");
   const { blob, mediaType } = await extractAudioFromFile(file, (currentTime, totalTime) => {
-    onProgress?.("Extrayendo pista de audio…", { currentTime, totalTime });
+    onProgress?.("Preparando audio…", { current: currentTime, total: totalTime, unit: "seconds" });
   });
 
   // Gateway has a smaller payload limit, so for large audio use Scribe (multipart upload).
@@ -361,8 +401,14 @@ export async function transcribeMedia(
     }
   }
 
-  onProgress?.("Transcribiendo audio (Scribe)…");
-  return await transcribeWithScribe(blob, signal);
+  onProgress?.("Subiendo audio para transcripción…", { current: 0, total: blob.size, unit: "bytes" });
+  return await transcribeWithScribe(blob, signal, (loaded, total) => {
+    onProgress?.("Subiendo audio para transcripción…", {
+      current: loaded,
+      total: total || blob.size,
+      unit: "bytes",
+    });
+  });
 }
 
 export interface SubtitleSegment {
