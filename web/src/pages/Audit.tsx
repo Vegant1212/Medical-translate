@@ -17,7 +17,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
-import { CopyButton, Panel, Segmented, Spinner, StatusPill } from "@/components/controls";
+import { CopyButton, Panel, Segmented, Spinner, StatusPill, useEstimatedPercent } from "@/components/controls";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useSettings } from "@/context/settings";
@@ -115,6 +115,7 @@ export default function AuditPage() {
   const [checkProgress, setCheckProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [report, setReport] = useState<AuditReport | undefined>(undefined);
   const [dragging, setDragging] = useState<boolean>(false);
+  const estimatedPercent = useEstimatedPercent(stage !== -1);
 
   const locale = settings.targetLanguage === "auto" ? "es" : settings.targetLanguage;
 
@@ -387,7 +388,14 @@ export default function AuditPage() {
 
         {audit.isPending ? (
           <Panel className="p-6">
-            <p className="font-serif text-lg">Auditando {fileName}</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-serif text-lg">Auditando {fileName}</p>
+              <span className="font-mono text-sm tabular-nums text-primary">
+                {stage === 2 && checkProgress.total > 0
+                  ? Math.round((checkProgress.done / checkProgress.total) * 100)
+                  : estimatedPercent}%
+              </span>
+            </div>
             <ul className="mt-4 space-y-2.5">
               {STAGES.map((label, index) => {
                 const active = stage === index;
@@ -418,7 +426,7 @@ export default function AuditPage() {
               />
             ) : (
               <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-secondary">
-                <div className="h-full w-1/3 animate-shimmer bg-gradient-to-r from-transparent via-primary to-transparent" />
+                <div className="h-full rounded-full bg-gradient-to-r from-primary via-violet to-coral transition-[width] duration-500" style={{ width: `${estimatedPercent}%` }} />
               </div>
             )}
           </Panel>
