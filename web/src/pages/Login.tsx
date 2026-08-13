@@ -9,9 +9,8 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/auth";
 
 export default function LoginPage() {
-  const { user, signIn, signUp } = useAuth();
+  const { user, signIn } = useAuth();
   const location = useLocation();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
@@ -27,14 +26,8 @@ export default function LoginPage() {
     }
     setPending(true);
     try {
-      if (mode === "signin") {
-        await signIn(email.trim(), password);
-        toast.success("Sesión iniciada");
-      } else {
-        const active = await signUp(email.trim(), password);
-        toast.success(active ? "Cuenta creada" : "Cuenta creada. Revisa tu correo para confirmarla.");
-        if (!active) setMode("signin");
-      }
+      await signIn(email.trim(), password);
+      toast.success("Sesión iniciada");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo acceder.");
     } finally {
@@ -55,13 +48,11 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <div className="mb-5 grid grid-cols-2 rounded-xl border border-border/70 bg-elevated/60 p-1">
-          <button type="button" onClick={() => setMode("signin")} className={`rounded-lg px-3 py-2 text-sm ${mode === "signin" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
-            Iniciar sesión
-          </button>
-          <button type="button" onClick={() => setMode("signup")} className={`rounded-lg px-3 py-2 text-sm ${mode === "signup" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
-            Crear cuenta
-          </button>
+        <div className="mb-5 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+          <p className="text-sm font-medium text-primary">Acceso privado por invitación</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Ingresa con el correo autorizado por el administrador.
+          </p>
         </div>
 
         <form onSubmit={submit} className="space-y-4">
@@ -71,10 +62,10 @@ export default function LoginPage() {
           </label>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium">Contraseña</span>
-            <Input type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} required minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" />
+            <Input type="password" autoComplete="current-password" required minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" />
           </label>
           <Button type="submit" disabled={pending} className="h-11 w-full rounded-xl">
-            {pending ? <><Loader2 className="animate-spin" /> Procesando…</> : <><LockKeyhole /> {mode === "signin" ? "Entrar" : "Crear cuenta privada"}</>}
+            {pending ? <><Loader2 className="animate-spin" /> Procesando…</> : <><LockKeyhole /> Entrar</>}
           </Button>
         </form>
 
