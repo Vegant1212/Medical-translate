@@ -255,7 +255,7 @@ export default function Index() {
             className="panel grain flex h-full flex-col justify-between p-5"
           >
             <div>
-              <span className="rounded-xl border border-info/25 bg-info/10 p-2.5">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-info/25 bg-info/10">
                 <ShieldCheck className="h-[18px] w-[18px] text-info" strokeWidth={1.9} />
               </span>
               <p className="mt-4 font-serif text-[19px] font-semibold tracking-tight">Trazabilidad científica</p>
