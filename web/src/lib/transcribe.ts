@@ -107,11 +107,11 @@ export async function extractAudioFromFile(
 
   // For video files, decode via an <audio> element and re-encode with MediaRecorder.
   const url = URL.createObjectURL(file);
+  const audioEl = document.createElement("video");
   try {
     // A <video> element is required here. Some browsers never emit
     // loadedmetadata when a video container is assigned to an Audio element,
     // even when the file has a valid audio track.
-    const audioEl = document.createElement("video");
     audioEl.preload = "auto";
     audioEl.src = url;
     audioEl.crossOrigin = "anonymous";
@@ -120,11 +120,26 @@ export async function extractAudioFromFile(
     // supplies the audio samples to the recorder without playing them aloud.
     audioEl.muted = true;
     audioEl.playsInline = true;
+    audioEl.style.position = "fixed";
+    audioEl.style.width = "1px";
+    audioEl.style.height = "1px";
+    audioEl.style.opacity = "0";
+    audioEl.style.pointerEvents = "none";
+    document.body.appendChild(audioEl);
     audioEl.load();
 
     await new Promise<void>((resolve, reject) => {
-      audioEl.addEventListener("loadedmetadata", () => resolve(), { once: true });
-      audioEl.addEventListener("error", () => reject(new Error("No se pudo cargar el archivo de audio/vídeo.")), {
+      const timeout = window.setTimeout(() => {
+        reject(new Error("El navegador no pudo leer la pista de audio de este video. Prueba convertirlo a MP4 (H.264/AAC)."));
+      }, 15000);
+      audioEl.addEventListener("loadedmetadata", () => {
+        window.clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+      audioEl.addEventListener("error", () => {
+        window.clearTimeout(timeout);
+        reject(new Error("No se pudo leer la pista de audio del video. Comprueba que el MP4 incluya audio AAC."));
+      }, {
         once: true,
       });
     });
@@ -141,6 +156,12 @@ export async function extractAudioFromFile(
     // Create a MediaStreamDestination to capture audio
     const dest = audioCtx.createMediaStreamDestination();
     source.connect(dest);
+    // Keep the media clock active even when the tab is not focused. The gain is
+    // zero so processing remains silent for the user.
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    source.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
 
     // Pick the best supported mime type
     const mimeType = pickRecorderMime();
@@ -188,6 +209,10 @@ export async function extractAudioFromFile(
 
     return { blob, mediaType: mimeType };
   } finally {
+    audioEl.pause();
+    audioEl.removeAttribute("src");
+    audioEl.load();
+    audioEl.remove();
     URL.revokeObjectURL(url);
   }
 }
