@@ -218,6 +218,10 @@ export default function VideoPage() {
 
   const isBusy = transcribe.isPending || translate.isPending;
   const isVideo = file?.type.startsWith("video/") || /\.(mp4|webm|mov|avi|mkv)$/i.test(file?.name ?? "");
+  const extractionPercent =
+    extractionProgress.total > 0
+      ? Math.min(100, Math.round((extractionProgress.current / extractionProgress.total) * 100))
+      : 0;
 
   return (
     <AppShell
@@ -266,6 +270,7 @@ export default function VideoPage() {
 
             <button
               type="button"
+              disabled={transcribe.isPending}
               onClick={() => inputRef.current?.click()}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -282,6 +287,29 @@ export default function VideoPage() {
                 dragging ? "border-primary/60 bg-primary/5" : "hover:border-primary/40",
               )}
             >
+              {transcribe.isPending ? (
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-[inherit] bg-background/95 px-6 backdrop-blur-sm">
+                  <div className="relative flex h-28 w-28 items-center justify-center rounded-full bg-elevated shadow-glow">
+                    <div className="absolute inset-0 animate-spin rounded-full border-[7px] border-primary/15 border-t-primary border-r-violet" />
+                    <span className="text-3xl font-semibold tabular-nums">
+                      {stage === "extracting" && extractionProgress.total > 0 ? `${extractionPercent}%` : "•••"}
+                    </span>
+                  </div>
+                  <div className="text-center">
+                    <p className="font-serif text-xl">{STAGE_LABELS[stage]}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {stage === "extracting" && extractionProgress.total > 0
+                        ? `${formatDuration(extractionProgress.current)} de ${formatDuration(extractionProgress.total)}`
+                        : "Preparando el archivo…"}
+                    </p>
+                  </div>
+                  <Progress
+                    value={stage === "extracting" && extractionProgress.total > 0 ? extractionPercent : 35}
+                    className={cn("h-2 w-full max-w-md bg-secondary", extractionProgress.total === 0 && "animate-pulse")}
+                  />
+                  <p className="text-xs text-muted-foreground">Mantén esta pestaña abierta durante el procesamiento.</p>
+                </div>
+              ) : null}
               <div className="relative">
                 <div className="absolute inset-0 animate-pulse-soft rounded-2xl bg-primary/20 blur-2xl" />
                 <div className="relative rounded-2xl border border-primary/30 bg-primary/10 p-4">
