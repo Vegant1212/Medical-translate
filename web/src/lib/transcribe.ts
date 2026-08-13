@@ -8,6 +8,7 @@ import { chat, chatJson, MEDICAL_MODEL } from "./toolkit";
 import { DOMAINS, REGISTERS, localeDescriptor, type MedicalDomain, type RegisterLevel } from "./languages";
 import ffmpegCoreURL from "@ffmpeg/core?url";
 import ffmpegWasmURL from "@ffmpeg/core/wasm?url";
+import { supabase } from "./supabase";
 
 const TOOLKIT_URL: string =
   ((import.meta.env.EXPO_PUBLIC_TOOLKIT_URL as string | undefined) ?? "https://toolkit.rork.com").replace(/\/$/, "");
@@ -243,7 +244,7 @@ async function extractAudioWithFFmpeg(
     await ffmpeg.load({ coreURL: ffmpegCoreURL, wasmURL: ffmpegWasmURL }, { signal });
     await ffmpeg.writeFile(inputName, await fetchFile(file), { signal });
     const exitCode = await ffmpeg.exec(
-      ["-i", inputName, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k", outputName],
+      ["-i", inputName, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", outputName],
       10 * 60 * 1000,
       { signal },
     );
@@ -334,6 +335,25 @@ async function transcribeWithGateway(
     duration: data.durationInSeconds ?? segments[segments.length - 1]?.end ?? 0,
     segments,
   };
+}
+
+async function transcribeWithPrivateOpenAI(audioBlob: Blob, signal?: AbortSignal): Promise<TranscriptionResult> {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session?.access_token) throw new Error("Tu sesión venció. Inicia sesión de nuevo.");
+  const response = await fetch("/api/openai/transcribe", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${data.session.access_token}`, "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify({ audio: await fileToBase64(audioBlob), filename: "audio.mp3", mediaType: audioBlob.type || "audio/mpeg" }),
+  });
+  if (!response.ok) {
+    if (response.status === 413) throw new Error("El audio del video es demasiado largo para procesarlo en una sola parte.");
+    if (response.status === 429) throw new Error("OpenAI está saturado. Espera unos segundos e inténtalo de nuevo.");
+    throw new Error("OpenAI no pudo transcribir el audio.");
+  }
+  const result = await response.json() as GatewayTranscriptionResponse & { duration?: number };
+  const segments = (result.segments ?? []).map((segment, index) => ({ index, start: segment.start ?? 0, end: segment.end ?? 0, text: segment.text?.trim() ?? "" })).filter((segment) => segment.text.length > 0);
+  return { text: result.text ?? segments.map((segment) => segment.text).join(" "), language: result.language ?? "unknown", duration: result.duration ?? result.durationInSeconds ?? segments.at(-1)?.end ?? 0, segments };
 }
 
 /** Transcribes audio via ElevenLabs Scribe through the Toolkit proxy (fallback with word timestamps). */
@@ -473,6 +493,11 @@ export async function transcribeMedia(
 
   // Gateway has a smaller payload limit, so for large audio use Scribe (multipart upload).
   const useScribe = blob.size > 20 * 1024 * 1024;
+
+  if (blob.size < 2_700_000) {
+    onProgress?.("Transcribiendo audio con OpenAI…");
+    return transcribeWithPrivateOpenAI(blob, signal);
+  }
 
   if (!useScribe) {
     onProgress?.("Transcribiendo audio (AI Gateway)…");
