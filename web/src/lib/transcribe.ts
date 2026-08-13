@@ -6,6 +6,8 @@
 
 import { chat, chatJson, MEDICAL_MODEL } from "./toolkit";
 import { DOMAINS, REGISTERS, localeDescriptor, type MedicalDomain, type RegisterLevel } from "./languages";
+import ffmpegCoreURL from "@ffmpeg/core?url";
+import ffmpegWasmURL from "@ffmpeg/core/wasm?url";
 
 const TOOLKIT_URL: string =
   ((import.meta.env.EXPO_PUBLIC_TOOLKIT_URL as string | undefined) ?? "https://toolkit.rork.com").replace(/\/$/, "");
@@ -217,6 +219,52 @@ export async function extractAudioFromFile(
   }
 }
 
+/** Extracts and compresses a video's audio without relying on media playback. */
+async function extractAudioWithFFmpeg(
+  file: File,
+  onProgress?: (progress: number) => void,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; mediaType: string }> {
+  const [{ FFmpeg }, { fetchFile }] = await Promise.all([
+    import("@ffmpeg/ffmpeg"),
+    import("@ffmpeg/util"),
+  ]);
+  const ffmpeg = new FFmpeg();
+  const extension = file.name.match(/\.[a-z0-9]+$/i)?.[0] ?? ".mp4";
+  const inputName = `input${extension}`;
+  const outputName = "audio.mp3";
+  const progressHandler = ({ progress }: { progress: number }): void => {
+    if (Number.isFinite(progress)) onProgress?.(Math.max(0, Math.min(1, progress)));
+  };
+
+  ffmpeg.on("progress", progressHandler);
+  try {
+    onProgress?.(0);
+    await ffmpeg.load({ coreURL: ffmpegCoreURL, wasmURL: ffmpegWasmURL }, { signal });
+    await ffmpeg.writeFile(inputName, await fetchFile(file), { signal });
+    const exitCode = await ffmpeg.exec(
+      ["-i", inputName, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k", outputName],
+      10 * 60 * 1000,
+      { signal },
+    );
+    if (exitCode !== 0) {
+      throw new Error("No se pudo extraer el audio de este video.");
+    }
+    const output = await ffmpeg.readFile(outputName, undefined, { signal });
+    if (typeof output === "string") throw new Error("No se pudo generar el archivo de audio.");
+    onProgress?.(1);
+    return { blob: new Blob([new Uint8Array(output)], { type: "audio/mpeg" }), mediaType: "audio/mpeg" };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new Error("No se pudo preparar el audio del video. Comprueba que el archivo incluya una pista de audio válida.", {
+      cause: error,
+    });
+  } finally {
+    ffmpeg.off("progress", progressHandler);
+    ffmpeg.terminate();
+  }
+}
+
 function pickRecorderMime(): string {
   const candidates = [
     "audio/webm;codecs=opus",
@@ -391,7 +439,7 @@ async function transcribeWithScribe(
  */
 export async function transcribeMedia(
   file: File,
-  onProgress?: (stage: string, mediaProgress?: { current: number; total: number; unit: "seconds" | "bytes" }) => void,
+  onProgress?: (stage: string, mediaProgress?: { current: number; total: number; unit: "seconds" | "bytes" | "percent" }) => void,
   signal?: AbortSignal,
 ): Promise<TranscriptionResult> {
   if (file.size > MAX_VIDEO_BYTES) {
@@ -415,9 +463,13 @@ export async function transcribeMedia(
   }
 
   onProgress?.("Preparando audio…");
-  const { blob, mediaType } = await extractAudioFromFile(file, (currentTime, totalTime) => {
-    onProgress?.("Preparando audio…", { current: currentTime, total: totalTime, unit: "seconds" });
-  });
+  const { blob, mediaType } = isVideo
+    ? await extractAudioWithFFmpeg(file, (value) => {
+        onProgress?.("Preparando audio…", { current: value * 100, total: 100, unit: "percent" });
+      }, signal)
+    : await extractAudioFromFile(file, (currentTime, totalTime) => {
+        onProgress?.("Preparando audio…", { current: currentTime, total: totalTime, unit: "seconds" });
+      });
 
   // Gateway has a smaller payload limit, so for large audio use Scribe (multipart upload).
   const useScribe = blob.size > 20 * 1024 * 1024;
