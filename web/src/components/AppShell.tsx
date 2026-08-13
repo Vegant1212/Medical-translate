@@ -125,7 +125,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { language } = useInterfaceLanguage();
   const copy = UI_COPY[language];
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" data-interface-translate="off">
       <NavLink to="/" onClick={onNavigate} className="group flex items-center gap-3 px-5 py-6">
         <div className="relative">
           <div className="absolute inset-0 rounded-xl bg-primary/25 blur-lg transition-opacity group-hover:opacity-100 opacity-70" />
