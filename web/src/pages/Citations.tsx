@@ -18,7 +18,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
-import { CopyButton, Panel, Segmented, Spinner, StatusPill } from "@/components/controls";
+import { CopyButton, Panel, ProcessPercentage, Segmented, Spinner, StatusPill } from "@/components/controls";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -221,6 +221,7 @@ subtitle="Sube el artículo en PDF, Word o PowerPoint — o pega un DOI/PMID —
                   <Loader2 className="h-7 w-7 animate-spin text-primary" />
                   <p className="mt-3 text-[13px] font-medium">Extrayendo metadatos del artículo…</p>
                   <p className="mt-1 label-xs">Leyendo el documento · identificando título, autores, DOI · validando en Crossref</p>
+                  <div className="mt-4 flex w-full justify-center"><ProcessPercentage label="Analizando artículo" /></div>
                 </div>
               ) : (
                 <Textarea
