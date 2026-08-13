@@ -21,7 +21,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
-import { CopyButton, LanguageBar, Panel, RegisterDomainControls, Segmented, Spinner } from "@/components/controls";
+import { CopyButton, LanguageBar, Panel, RegisterDomainControls, Segmented, Spinner, useEstimatedPercent } from "@/components/controls";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
@@ -86,6 +86,7 @@ export default function VideoPage() {
   const [specialty, setSpecialty] = useState<string>("");
   const [subFormat, setSubFormat] = useState<SubFormat>("srt");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const estimatedPercent = useEstimatedPercent(stage === "transcribing");
 
   const transcribe = useMutation({
     mutationFn: async (inputFile: File): Promise<TranscriptionResult> => {
@@ -298,7 +299,9 @@ export default function VideoPage() {
                   <div className="relative flex h-28 w-28 items-center justify-center rounded-full bg-elevated shadow-glow">
                     <div className="absolute inset-0 animate-spin rounded-full border-[7px] border-primary/15 border-t-primary border-r-violet" />
                     <span className="text-3xl font-semibold tabular-nums">
-                      {(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0 ? `${extractionPercent}%` : "•••"}
+                      {(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0
+                        ? `${extractionPercent}%`
+                        : stage === "transcribing" ? `${estimatedPercent}%` : "•••"}
                     </span>
                   </div>
                   <div className="text-center">
@@ -314,7 +317,7 @@ export default function VideoPage() {
                     </p>
                   </div>
                   <Progress
-                    value={(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0 ? extractionPercent : 100}
+                    value={(stage === "extracting" || stage === "uploading") && extractionProgress.total > 0 ? extractionPercent : stage === "transcribing" ? estimatedPercent : 0}
                     className={cn("h-2 w-full max-w-md bg-secondary", extractionProgress.total === 0 && "animate-pulse")}
                   />
                   <p className="text-xs text-muted-foreground">Mantén esta pestaña abierta durante el procesamiento.</p>
