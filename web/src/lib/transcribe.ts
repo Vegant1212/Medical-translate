@@ -558,3 +558,136 @@ export function buildVtt(segments: SubtitleSegment[]): string {
 /** Builds a bilingual subtitle file (original + translation) for SRT. */
 export function buildBilingualSrt(segments: SubtitleSegment[]): string {
   return segments
+    .map((seg) => {
+      return `${seg.index + 1}\n${formatSrtTime(seg.start)} --> ${formatSrtTime(seg.end)}\n${seg.original}\n${seg.translated}`;
+    })
+    .join("\n\n");
+}
+
+export interface TranslateSubtitleOptions {
+  segments: TranscriptSegment[];
+  targetLanguage: string;
+  targetVariant?: string;
+  sourceLanguage: string | "auto";
+  register: RegisterLevel;
+  domain: MedicalDomain;
+  glossary: { source: string; target: string }[];
+  signal?: AbortSignal;
+}
+
+const BASE_ROLE = `Eres un traductor médico certificado especializado en contenido audiovisual sanitario: conferencias, clases magistrales, vídeos para pacientes, documentales médicos y presentaciones clínicas.
+Dominas MeSH, DeCS, SNOMED CT, CIE-11, DCI/INN y terminología veterinaria (WOAH/OIE).
+Reglas inviolables:
+- Conserva cifras, dosis, unidades, vías y valores exactos.
+- Mantén la concisión: el texto traducido debe caber en un subtítulo (máx. 2 líneas, ~42 caracteres por línea).
+- No inventes datos ni omitas información clínica.
+- Usa la sigla estándar del idioma destino; añade la original entre paréntesis solo la primera vez.`;
+
+function registerInstruction(register: RegisterLevel): string {
+  return REGISTERS.find((item) => item.id === register)?.instruction ?? "";
+}
+
+function domainInstruction(domain: MedicalDomain): string {
+  return DOMAINS.find((item) => item.id === domain)?.instruction ?? "";
+}
+
+/** Translates transcript segments in batches, preserving timing IDs. */
+export async function translateSubtitles(
+  options: TranslateSubtitleOptions,
+  onProgress?: (done: number, total: number) => void,
+): Promise<Record<string, string>> {
+  const glossaryBlock =
+    options.glossary.length > 0
+      ? `\nGLOSARIO OBLIGATORIO:\n${options.glossary.map((g) => `- "${g.source}" => "${g.target}"`).join("\n")}`
+      : "";
+
+  const system = `${BASE_ROLE}
+
+TAREA: traducir los segmentos de una transcripción de vídeo médico a ${localeDescriptor(options.targetLanguage, options.targetVariant)}.
+Origen: ${options.sourceLanguage === "auto" ? "detéctalo automáticamente" : localeDescriptor(options.sourceLanguage)}.
+REGISTRO: ${registerInstruction(options.register)}
+${domainInstruction(options.domain)}${glossaryBlock}
+
+REGLAS CRÍTICAS:
+- Traduce cada segmento por separado, devuelve exactamente el mismo "id".
+- Sé conciso: máximo 84 caracteres por segmento (para subtítulos).
+- No fusiones ni dividas segmentos.
+- Si un segmento es solo ruido, música o ininteligible, devuélvelo idéntico.
+Devuelve EXCLUSIVAMENTE un array JSON: [{"id":"s0","t":"traducción"}]`;
+
+  const map: Record<string, string> = {};
+  const batchSize = 12;
+  const batches: TranscriptSegment[][] = [];
+  for (let i = 0; i < options.segments.length; i += batchSize) {
+    batches.push(options.segments.slice(i, i + batchSize));
+  }
+
+  let done = 0;
+  const total = options.segments.length;
+
+  for (const batch of batches) {
+    const result = await chatJson<{ id: string; t: string }[]>(
+      [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: JSON.stringify(
+            batch.map((seg) => ({ id: `s${seg.index}`, t: seg.text })),
+          ),
+        },
+      ],
+      { temperature: 0.15, maxTokens: 8000, signal: options.signal },
+    );
+
+    for (const item of Array.isArray(result) ? result : []) {
+      if (typeof item?.id === "string" && typeof item?.t === "string") {
+        map[item.id] = item.t;
+      }
+    }
+    done += batch.length;
+    onProgress?.(done, total);
+  }
+
+  return map;
+}
+
+/** Generates a medical summary / key points from a transcript using the chat model. */
+export async function summarizeTranscript(
+  text: string,
+  language: string,
+  domain: MedicalDomain,
+  signal?: AbortSignal,
+): Promise<string> {
+  const system = `${BASE_ROLE}
+
+TAREA: resume un vídeo médico transcripto en ${language === "auto" ? "el idioma detectado" : localeDescriptor(language)}.
+${domainInstruction(domain)}
+Extrae los puntos clave, hallazgos clínicos, dosis mencionadas, nombres de fármacos y conclusiones.
+Devuelve un resumen estructurado en texto plano (máx. 600 palabras), sin JSON.`;
+
+  const result = await chat(
+    [
+      { role: "system", content: system },
+      { role: "user", content: text.slice(0, 12000) },
+    ],
+    { temperature: 0.2, maxTokens: 4000, model: MEDICAL_MODEL, signal },
+  );
+  return result.trim();
+}
+
+/** Detects the medical specialty from a transcript. */
+export async function detectSpecialty(text: string, signal?: AbortSignal): Promise<string> {
+  const system = `${BASE_ROLE}
+
+TAREA: identifica la especialidad médica principal del siguiente contenido.
+Devuelve únicamente el nombre de la especialidad (máx. 60 caracteres), sin JSON ni explicación.`;
+
+  const result = await chat(
+    [
+      { role: "system", content: system },
+      { role: "user", content: text.slice(0, 3000) },
+    ],
+    { temperature: 0.1, maxTokens: 100, model: MEDICAL_MODEL, signal },
+  );
+  return result.trim();
+}
